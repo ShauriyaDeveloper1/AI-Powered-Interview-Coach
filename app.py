@@ -114,6 +114,7 @@ _rl_env = None
 _rl_agent = None
 _session_episodes = {}
 _rl_available = False
+_openenv_env = None
 
 try:
     from rl_interview_coach import (
@@ -122,6 +123,7 @@ try:
         TaskBank,
         TaskType,
         Action,
+        FeedbackStrategy,
     )
 
     _rl_available = True
@@ -1147,11 +1149,12 @@ def api_mock_interview_download(video_id):
 
 def init_rl_system():
     """Initialize RL environment and agent when RL dependencies are available."""
-    global _rl_env, _rl_agent
+    global _rl_env, _rl_agent, _openenv_env
     if not _rl_available:
         return
 
     _rl_env = InterviewCoachEnv(max_attempts=5, target_grade=0.80)
+    _openenv_env = InterviewCoachEnv(max_attempts=5, target_grade=0.80)
     _rl_agent = QLearningAgent(learning_rate=0.15)
 
     checkpoint = Path("models/agent_checkpoint.json")
@@ -1413,6 +1416,77 @@ def api_rl_agent_stats():
             "q_table_summary": _rl_agent.get_q_table_summary(),
         }
     )
+
+
+def _openenv_error(message, status=400):
+    return jsonify({"error": message}), status
+
+
+@app.get("/health")
+def openenv_health():
+    return jsonify({"ok": True, "service": "interview-coach-openenv"})
+
+
+@app.post("/reset")
+def openenv_reset():
+    if not _rl_available or _openenv_env is None:
+        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+
+    data = request.get_json(silent=True) or {}
+    task_id = (data.get("task_id") or "").strip()
+
+    try:
+        task = TaskBank.get_task(task_id) if task_id else None
+        obs = _openenv_env.reset(task)
+    except Exception as exc:
+        return _openenv_error(str(exc), 400)
+
+    return jsonify(obs.model_dump(mode="json"))
+
+
+@app.get("/state")
+def openenv_state():
+    if not _rl_available or _openenv_env is None:
+        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+
+    try:
+        obs = _openenv_env.state()
+    except Exception as exc:
+        return _openenv_error(str(exc), 400)
+
+    return jsonify(obs.model_dump(mode="json"))
+
+
+@app.post("/step")
+def openenv_step():
+    if not _rl_available or _openenv_env is None:
+        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+
+    data = request.get_json(silent=True) or {}
+    action_data = data.get("action") if isinstance(data.get("action"), dict) else data
+
+    try:
+        strategy = action_data.get("strategy")
+        confidence = action_data.get("confidence", 0.95)
+        response_text = action_data.get("response_text")
+
+        if not strategy:
+            return _openenv_error("action.strategy is required")
+        if not response_text or not str(response_text).strip():
+            return _openenv_error("action.response_text is required")
+
+        action = Action(
+            strategy=FeedbackStrategy(strategy),
+            confidence=float(confidence),
+            response_text=str(response_text),
+        )
+        result = _openenv_env.step(action)
+    except ValueError as exc:
+        return _openenv_error(str(exc), 400)
+    except Exception as exc:
+        return _openenv_error(str(exc), 500)
+
+    return jsonify(result.model_dump(mode="json"))
 
 
 init_db()

@@ -30,7 +30,6 @@ from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, Task
 API_BASE_URL = os.getenv("API_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME")
 HF_TOKEN = os.getenv("HF_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
 
 MAX_ATTEMPTS = 3
@@ -65,9 +64,9 @@ def _log_step(step: int, action: str, reward: float, done: bool, error: str | No
     )
 
 
-def _log_end(success: bool, steps: int, rewards: List[float]) -> None:
+def _log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(
-        f"[END] success={_bool_str(success)} steps={steps} rewards={_format_reward_list(rewards)}",
+        f"[END] success={_bool_str(success)} steps={steps} score={score:.3f} rewards={_format_reward_list(rewards)}",
         flush=True,
     )
 
@@ -78,10 +77,8 @@ def _require_config() -> None:
         missing.append("API_BASE_URL")
     if not MODEL_NAME:
         missing.append("MODEL_NAME")
-    # Use OPENAI_API_KEY if available (for AIML), fallback to HF_TOKEN for Hugging Face endpoints
-    api_key = OPENAI_API_KEY or HF_TOKEN
-    if not api_key:
-        missing.append("OPENAI_API_KEY or HF_TOKEN")
+    if not HF_TOKEN:
+        missing.append("HF_TOKEN")
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -116,9 +113,7 @@ def _build_prompt(question: str, attempt: int, previous_feedback: List[str]) -> 
 
 def run_inference() -> Dict:
     _require_config()
-    # Use OPENAI_API_KEY if available (for AIML), else use HF_TOKEN
-    api_key = OPENAI_API_KEY or HF_TOKEN
-    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     env = InterviewCoachEnv(seed=42, max_attempts=MAX_ATTEMPTS, target_grade=0.80)
 
     task_scores = []
@@ -190,7 +185,8 @@ def run_inference() -> Dict:
             )
             success = False
         finally:
-            _log_end(success=success, steps=attempts_used, rewards=step_rewards)
+            task_score = final_grade if final_grade > 0 else best_grade
+            _log_end(success=success, steps=attempts_used, score=task_score, rewards=step_rewards)
 
         task_scores.append(
             {
