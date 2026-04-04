@@ -6,8 +6,8 @@ sdk: docker
 app_port: 7860
 pinned: false
 tags:
-	- openenv
-	- reinforcement-learning
+  - openenv
+  - reinforcement-learning
 ---
 
 # AI-Powered Interview Coach
