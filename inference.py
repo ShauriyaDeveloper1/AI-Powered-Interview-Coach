@@ -63,6 +63,13 @@ def _log_end(success: bool, steps: int, score: float, rewards: List[float]) -> N
     )
 
 
+def _log_bootstrap_failure(error: str) -> None:
+    """Emit a minimal structured episode when a fatal error happens before task execution."""
+    _log_start("bootstrap")
+    _log_step(step=1, action="bootstrap-failure", reward=0.0, done=True, error=error)
+    _log_end(success=False, steps=1, score=0.0, rewards=[0.0])
+
+
 def _has_remote_config() -> bool:
     return bool(OpenAI and MODEL_NAME and os.getenv("API_BASE_URL") and os.getenv("API_KEY"))
 
@@ -277,7 +284,7 @@ def main() -> None:
     try:
         run_inference()
     except Exception as exc:
-        print(f"[END] success=false steps=0 score=0.000 rewards=0.00 error={_sanitize_field(str(exc))}", flush=True)
+        _log_bootstrap_failure(_sanitize_field(str(exc)))
 
 
 if __name__ == "__main__":
