@@ -34,6 +34,7 @@ API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("APL_BASE_URL")
 API_KEY = os.getenv("API_KEY") or os.getenv("APL_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
+ALLOW_OFFLINE = os.getenv("ALLOW_OFFLINE", "0") == "1"
 
 MAX_ATTEMPTS = 3
 REPORT_PATH = Path("reports/inference_scores.json")
@@ -87,7 +88,15 @@ def _build_offline_answer(question: str, attempt: int, previous_feedback: List[s
     )
 
 
-def _get_answer(client, remote_mode: bool, prompt: str, question: str, attempt: int, previous_feedback: List[str]) -> str:
+def _get_answer(
+    client,
+    remote_mode: bool,
+    prompt: str,
+    question: str,
+    attempt: int,
+    previous_feedback: List[str],
+    allow_offline: bool,
+) -> str:
     if remote_mode and client is not None:
         try:
             completion = client.chat.completions.create(
@@ -102,7 +111,8 @@ def _get_answer(client, remote_mode: bool, prompt: str, question: str, attempt: 
             if completion.choices and completion.choices[0].message.content:
                 return completion.choices[0].message.content.strip()
         except Exception:
-            pass
+            if not allow_offline:
+                raise
 
     return _build_offline_answer(question, attempt, previous_feedback)
 
@@ -144,8 +154,14 @@ def run_inference() -> Dict:
     elif os.getenv("APL_KEY"):
         key_source = "APL_KEY"
 
+    if not remote_mode and not ALLOW_OFFLINE:
+        raise RuntimeError(
+            "Missing required proxy config. Set API_BASE_URL and API_KEY (or APL_BASE_URL/APL_KEY). "
+            "For local dry-runs only, set ALLOW_OFFLINE=1."
+        )
+
     print(
-        f"[CONFIG] proxy_base_url_present={_bool_str(bool(API_BASE_URL))} proxy_key_source={key_source} remote_mode={_bool_str(remote_mode)}",
+        f"[CONFIG] proxy_base_url_present={_bool_str(bool(API_BASE_URL))} proxy_key_source={key_source} remote_mode={_bool_str(remote_mode)} allow_offline={_bool_str(ALLOW_OFFLINE)}",
         flush=True,
     )
 
@@ -178,7 +194,15 @@ def run_inference() -> Dict:
                 strategy = _choose_strategy(attempt)
                 prompt = _build_prompt(task.question, attempt, feedback_history)
 
-                answer = _get_answer(client, remote_mode, prompt, task.question, attempt, feedback_history)
+                answer = _get_answer(
+                    client,
+                    remote_mode,
+                    prompt,
+                    task.question,
+                    attempt,
+                    feedback_history,
+                    ALLOW_OFFLINE,
+                )
 
                 action = Action(strategy=strategy, confidence=0.95, response_text=answer)
                 step_result = env.step(action)
