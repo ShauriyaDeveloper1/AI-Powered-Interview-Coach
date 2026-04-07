@@ -15,26 +15,24 @@ from pathlib import Path
 from typing import Dict, List
 
 try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
-
-# Load env vars from a local .env file when available.
-if load_dotenv is not None:
-    load_dotenv()
-
-try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
 
 from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, TaskBank, TaskType
 
-API_BASE_URL = os.getenv("API_BASE_URL")
-API_KEY = os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
 ALLOW_OFFLINE = os.getenv("ALLOW_OFFLINE", "0") == "1"
+
+
+def _proxy_env_present() -> bool:
+    return bool(os.getenv("API_BASE_URL") and os.getenv("API_KEY"))
+
+
+def _offline_allowed() -> bool:
+    # Never allow offline fallback when validator proxy vars are injected.
+    return ALLOW_OFFLINE and not _proxy_env_present()
 
 MAX_ATTEMPTS = 3
 REPORT_PATH = Path("reports/inference_scores.json")
@@ -76,16 +74,41 @@ def _log_end(success: bool, steps: int, score: float, rewards: List[float]) -> N
 
 
 def _has_remote_config() -> bool:
-    return bool(OpenAI and API_BASE_URL and MODEL_NAME and API_KEY)
+    return bool(OpenAI and os.getenv("API_BASE_URL") and MODEL_NAME and os.getenv("API_KEY"))
 
 
 def _require_proxy_env() -> None:
     """Require the validator-provided proxy variables in submission mode."""
-    if ALLOW_OFFLINE:
+    if _offline_allowed():
         return
     # Use exact validator variable names; no aliases/fallback providers.
     os.environ["API_BASE_URL"]
     os.environ["API_KEY"]
+
+
+def _create_proxy_client():
+    """Create OpenAI client bound only to injected validator proxy vars."""
+    if OpenAI is None:
+        raise RuntimeError("openai package is not installed.")
+    return OpenAI(
+        base_url=os.environ["API_BASE_URL"].strip(),
+        api_key=os.environ["API_KEY"].strip(),
+    )
+
+
+def _assert_proxy_call_works(client) -> None:
+    """Ensure at least one successful call goes through the proxy before task loop."""
+    completion = client.chat.completions.create(
+        model=MODEL_NAME,
+        temperature=0.0,
+        messages=[
+            {"role": "system", "content": "Reply with exactly OK."},
+            {"role": "user", "content": "OK"},
+        ],
+        max_tokens=4,
+    )
+    if not (completion.choices and completion.choices[0].message.content):
+        raise RuntimeError("Proxy preflight call returned empty content.")
 
 
 def _build_offline_answer(question: str, attempt: int, previous_feedback: List[str]) -> str:
@@ -161,23 +184,25 @@ def run_inference() -> Dict:
     if os.getenv("API_KEY"):
         key_source = "API_KEY"
 
-    if not remote_mode and not ALLOW_OFFLINE:
+    effective_offline = _offline_allowed()
+
+    if not remote_mode and not effective_offline:
         raise RuntimeError(
             "Missing required proxy config. Set API_BASE_URL and API_KEY. "
             "For local dry-runs only, set ALLOW_OFFLINE=1."
         )
 
+    api_base_url = os.getenv("API_BASE_URL")
+    api_key = os.getenv("API_KEY")
+
     print(
-        f"[CONFIG] proxy_base_url_present={_bool_str(bool(API_BASE_URL))} proxy_key_source={key_source} remote_mode={_bool_str(remote_mode)} allow_offline={_bool_str(ALLOW_OFFLINE)}",
+        f"[CONFIG] proxy_base_url_present={_bool_str(bool(api_base_url))} proxy_key_source={key_source} remote_mode={_bool_str(remote_mode)} allow_offline={_bool_str(effective_offline)}",
         flush=True,
     )
 
     if remote_mode:
-        try:
-            client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-        except Exception:
-            client = None
-            remote_mode = False
+        client = _create_proxy_client()
+        _assert_proxy_call_works(client)
 
     env = InterviewCoachEnv(seed=42, max_attempts=MAX_ATTEMPTS, target_grade=0.80)
 
@@ -208,7 +233,7 @@ def run_inference() -> Dict:
                     task.question,
                     attempt,
                     feedback_history,
-                    ALLOW_OFFLINE,
+                    effective_offline,
                 )
 
                 action = Action(strategy=strategy, confidence=0.95, response_text=answer)
@@ -236,6 +261,8 @@ def run_inference() -> Dict:
                     success = step_result.reward.success
                     break
         except Exception as exc:
+            if remote_mode and not effective_offline:
+                raise
             attempts_used = max(1, attempts_used or 1)
             step_rewards.append(0.0)
             _log_step(
@@ -267,9 +294,9 @@ def run_inference() -> Dict:
     success_rate = sum(1 for item in task_scores if item["success"]) / len(task_scores)
 
     report = {
-        "api_base_url": API_BASE_URL,
+        "api_base_url": api_base_url,
         "model_name": MODEL_NAME,
-        "proxy_key_present": bool(API_KEY),
+        "proxy_key_present": bool(api_key),
         "remote_mode": remote_mode,
         "seed": 42,
         "max_attempts": MAX_ATTEMPTS,
