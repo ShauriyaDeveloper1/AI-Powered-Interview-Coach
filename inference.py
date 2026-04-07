@@ -30,8 +30,8 @@ except ImportError:
 
 from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, TaskBank, TaskType
 
-API_BASE_URL = os.getenv("API_BASE_URL")
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("APL_BASE_URL")
+API_KEY = os.getenv("API_KEY") or os.getenv("APL_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
 
@@ -138,6 +138,17 @@ def _build_prompt(question: str, attempt: int, previous_feedback: List[str]) -> 
 def run_inference() -> Dict:
     client = None
     remote_mode = _has_remote_config()
+    key_source = "none"
+    if os.getenv("API_KEY"):
+        key_source = "API_KEY"
+    elif os.getenv("APL_KEY"):
+        key_source = "APL_KEY"
+
+    print(
+        f"[CONFIG] proxy_base_url_present={_bool_str(bool(API_BASE_URL))} proxy_key_source={key_source} remote_mode={_bool_str(remote_mode)}",
+        flush=True,
+    )
+
     if remote_mode:
         try:
             client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
