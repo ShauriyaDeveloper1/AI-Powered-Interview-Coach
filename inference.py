@@ -3,7 +3,7 @@ Submission inference entrypoint.
 
 Validator requirements covered:
 - Uses OpenAI client for all LLM calls.
-- Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment.
+- Reads API_BASE_URL, API_KEY, MODEL_NAME from environment.
 - Runs on 3 tasks (easy, medium, hard) and emits reproducible score report.
 """
 
@@ -30,8 +30,8 @@ except ImportError:
 
 from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, TaskBank, TaskType
 
-API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("APL_BASE_URL")
-API_KEY = os.getenv("API_KEY") or os.getenv("APL_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL")
+API_KEY = os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
 ALLOW_OFFLINE = os.getenv("ALLOW_OFFLINE", "0") == "1"
@@ -79,6 +79,15 @@ def _has_remote_config() -> bool:
     return bool(OpenAI and API_BASE_URL and MODEL_NAME and API_KEY)
 
 
+def _require_proxy_env() -> None:
+    """Require the validator-provided proxy variables in submission mode."""
+    if ALLOW_OFFLINE:
+        return
+    # Use exact validator variable names; no aliases/fallback providers.
+    os.environ["API_BASE_URL"]
+    os.environ["API_KEY"]
+
+
 def _build_offline_answer(question: str, attempt: int, previous_feedback: List[str]) -> str:
     feedback_hint = previous_feedback[-1] if previous_feedback else "focus on structure, clarity, and outcomes"
     return (
@@ -98,21 +107,19 @@ def _get_answer(
     allow_offline: bool,
 ) -> str:
     if remote_mode and client is not None:
-        try:
-            completion = client.chat.completions.create(
-                model=MODEL_NAME,
-                temperature=0.0,
-                messages=[
-                    {"role": "system", "content": "You produce interview answers only."},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=220,
-            )
-            if completion.choices and completion.choices[0].message.content:
-                return completion.choices[0].message.content.strip()
-        except Exception:
-            if not allow_offline:
-                raise
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            temperature=0.0,
+            messages=[
+                {"role": "system", "content": "You produce interview answers only."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=220,
+        )
+        if completion.choices and completion.choices[0].message.content:
+            return completion.choices[0].message.content.strip()
+        if not allow_offline:
+            raise RuntimeError("LLM returned empty content while proxy mode is required.")
 
     return _build_offline_answer(question, attempt, previous_feedback)
 
@@ -146,17 +153,17 @@ def _build_prompt(question: str, attempt: int, previous_feedback: List[str]) -> 
 
 
 def run_inference() -> Dict:
+    _require_proxy_env()
+
     client = None
     remote_mode = _has_remote_config()
     key_source = "none"
     if os.getenv("API_KEY"):
         key_source = "API_KEY"
-    elif os.getenv("APL_KEY"):
-        key_source = "APL_KEY"
 
     if not remote_mode and not ALLOW_OFFLINE:
         raise RuntimeError(
-            "Missing required proxy config. Set API_BASE_URL and API_KEY (or APL_BASE_URL/APL_KEY). "
+            "Missing required proxy config. Set API_BASE_URL and API_KEY. "
             "For local dry-runs only, set ALLOW_OFFLINE=1."
         )
 
