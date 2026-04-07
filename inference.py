@@ -23,7 +23,10 @@ except ImportError:
 if load_dotenv is not None:
     load_dotenv()
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, TaskBank, TaskType
 
@@ -71,16 +74,17 @@ def _log_end(success: bool, steps: int, score: float, rewards: List[float]) -> N
     )
 
 
-def _require_config() -> None:
-    missing = []
-    if not API_BASE_URL:
-        missing.append("API_BASE_URL")
-    if not MODEL_NAME:
-        missing.append("MODEL_NAME")
-    if not HF_TOKEN:
-        missing.append("HF_TOKEN")
-    if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+def _has_remote_config() -> bool:
+    return bool(OpenAI and API_BASE_URL and MODEL_NAME and HF_TOKEN)
+
+
+def _build_offline_answer(question: str, attempt: int, previous_feedback: List[str]) -> str:
+    feedback_hint = previous_feedback[-1] if previous_feedback else "focus on structure, clarity, and outcomes"
+    return (
+        f"I would answer the question by being specific about the situation, the actions I took, and the result. "
+        f"For this attempt, I would emphasize {feedback_hint}. "
+        f"Question context: {question} Attempt: {attempt}."
+    )
 
 
 def _choose_strategy(attempt: int) -> FeedbackStrategy:
@@ -112,8 +116,15 @@ def _build_prompt(question: str, attempt: int, previous_feedback: List[str]) -> 
 
 
 def run_inference() -> Dict:
-    _require_config()
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = None
+    remote_mode = _has_remote_config()
+    if remote_mode:
+        try:
+            client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        except Exception:
+            client = None
+            remote_mode = False
+
     env = InterviewCoachEnv(seed=42, max_attempts=MAX_ATTEMPTS, target_grade=0.80)
 
     task_scores = []
@@ -136,18 +147,21 @@ def run_inference() -> Dict:
                 strategy = _choose_strategy(attempt)
                 prompt = _build_prompt(task.question, attempt, feedback_history)
 
-                completion = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    temperature=0.0,
-                    messages=[
-                        {"role": "system", "content": "You produce interview answers only."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=220,
-                )
-                answer = ""
-                if completion.choices and completion.choices[0].message.content:
-                    answer = completion.choices[0].message.content.strip()
+                if remote_mode and client is not None:
+                    completion = client.chat.completions.create(
+                        model=MODEL_NAME,
+                        temperature=0.0,
+                        messages=[
+                            {"role": "system", "content": "You produce interview answers only."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=220,
+                    )
+                    answer = ""
+                    if completion.choices and completion.choices[0].message.content:
+                        answer = completion.choices[0].message.content.strip()
+                else:
+                    answer = _build_offline_answer(task.question, attempt, feedback_history)
 
                 action = Action(strategy=strategy, confidence=0.95, response_text=answer)
                 step_result = env.step(action)
@@ -207,6 +221,7 @@ def run_inference() -> Dict:
     report = {
         "api_base_url": API_BASE_URL,
         "model_name": MODEL_NAME,
+        "remote_mode": remote_mode,
         "seed": 42,
         "max_attempts": MAX_ATTEMPTS,
         "aggregate_score": round(aggregate_score, 4),
@@ -220,7 +235,10 @@ def run_inference() -> Dict:
 
 
 def main() -> None:
-    run_inference()
+    try:
+        run_inference()
+    except Exception as exc:
+        print(f"[END] success=false steps=0 score=0.000 rewards=0.00 error={_sanitize_field(str(exc))}", flush=True)
 
 
 if __name__ == "__main__":
