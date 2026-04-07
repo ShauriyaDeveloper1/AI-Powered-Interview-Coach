@@ -90,21 +90,6 @@ def _create_proxy_client():
     )
 
 
-def _assert_proxy_call_works(client) -> None:
-    """Ensure at least one successful call goes through the proxy before task loop."""
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        temperature=0.0,
-        messages=[
-            {"role": "system", "content": "Reply with exactly OK."},
-            {"role": "user", "content": "OK"},
-        ],
-        max_tokens=4,
-    )
-    if not (completion.choices and completion.choices[0].message.content):
-        raise RuntimeError("Proxy preflight call returned empty content.")
-
-
 def _get_answer(
     client,
     remote_mode: bool,
@@ -160,18 +145,12 @@ def _build_prompt(question: str, attempt: int, previous_feedback: List[str]) -> 
 
 def run_inference() -> Dict:
     _normalize_api_key_env()
-    _require_proxy_env()
 
     client = None
     remote_mode = _has_remote_config()
     key_source = "none"
     if os.getenv("API_KEY"):
         key_source = "API_KEY"
-
-    if not remote_mode:
-        raise RuntimeError(
-            "Missing required proxy config. Set API_BASE_URL and API_KEY."
-        )
 
     api_base_url = os.getenv("API_BASE_URL")
     api_key = os.getenv("API_KEY")
@@ -181,9 +160,12 @@ def run_inference() -> Dict:
         flush=True,
     )
 
+    proxy_error: Exception | None = None
     if remote_mode:
-        client = _create_proxy_client()
-        _assert_proxy_call_works(client)
+        try:
+            client = _create_proxy_client()
+        except Exception as exc:
+            proxy_error = exc
 
     env = InterviewCoachEnv(seed=42, max_attempts=MAX_ATTEMPTS, target_grade=0.80)
 
@@ -202,6 +184,9 @@ def run_inference() -> Dict:
         step_rewards: List[float] = []
 
         try:
+            if proxy_error is not None:
+                raise proxy_error
+
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 attempts_used = attempt
                 strategy = _choose_strategy(attempt)
@@ -241,7 +226,6 @@ def run_inference() -> Dict:
                     success = step_result.reward.success
                     break
         except Exception as exc:
-            raise
             attempts_used = max(1, attempts_used or 1)
             step_rewards.append(0.0)
             _log_step(
