@@ -23,4 +23,4 @@ RUN pip install -r requirements.txt
 COPY . .
 
 EXPOSE 7860
-CMD ["python", "server/app.py"]
+CMD ["python", "-m", "server.app"]
