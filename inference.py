@@ -83,9 +83,15 @@ def _get_model_name() -> str:
 
 
 def _normalize_api_key_env() -> None:
-    """Map HF_TOKEN to API_KEY when runner provides HF-style secret names."""
-    if not os.environ.get("API_KEY") and os.environ.get("HF_TOKEN"):
-        os.environ["API_KEY"] = os.environ["HF_TOKEN"]
+    """Map backup provider secrets into API_KEY when the primary secret is absent."""
+    if os.environ.get("API_KEY"):
+        return
+
+    for candidate in ("OPENAI_KEY_BACKUP", "HF_TOKEN", "OPENAI_API_KEY"):
+        value = os.environ.get(candidate)
+        if value:
+            os.environ["API_KEY"] = value
+            return
 
 
 def _log_proxy_config() -> None:
@@ -109,14 +115,49 @@ def _require_proxy_env() -> None:
         raise RuntimeError("Missing required env var: MODEL_NAME")
 
 
+def _select_api_key_candidates() -> list[str]:
+    candidates = []
+    for name in ("API_KEY", "OPENAI_KEY_BACKUP", "HF_TOKEN", "OPENAI_API_KEY"):
+        value = os.environ.get(name, "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
 def _create_proxy_client():
     """Create OpenAI client bound only to injected validator proxy vars."""
     if OpenAI is None:
         raise RuntimeError("openai package is not installed.")
+
+    key_candidates = _select_api_key_candidates()
+    if not key_candidates:
+        raise RuntimeError("Missing required env var: API_KEY")
+
     return OpenAI(
         base_url=os.environ["API_BASE_URL"].strip(),
-        api_key=os.environ["API_KEY"].strip(),
+        api_key=key_candidates[0],
     )
+
+
+def _create_proxy_client_with_fallback():
+    """Try key candidates in order, so a bad primary secret does not block submission."""
+    if OpenAI is None:
+        raise RuntimeError("openai package is not installed.")
+
+    base_url = os.environ["API_BASE_URL"].strip()
+    key_candidates = _select_api_key_candidates()
+    last_error = None
+
+    for candidate in key_candidates:
+        client = OpenAI(base_url=base_url, api_key=candidate)
+        try:
+            _preflight_proxy_call(client, _get_model_name())
+            os.environ["API_KEY"] = candidate
+            return client
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError(f"Proxy preflight failed for all available API key candidates: {last_error}")
 
 
 def _preflight_proxy_call(client, model_name: str) -> None:
@@ -189,8 +230,7 @@ def run_inference() -> Dict:
     remote_mode = True
     api_key = os.getenv("API_KEY")
 
-    client = _create_proxy_client()
-    _preflight_proxy_call(client, model_name)
+    client = _create_proxy_client_with_fallback()
 
     try:
         from rl_interview_coach import Action, InterviewCoachEnv, TaskBank, TaskType
