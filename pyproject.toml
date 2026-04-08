@@ -28,7 +28,7 @@ dependencies = [
   "gTTS",
   "pydub",
   "python-dotenv",
-  "openai",
+  "openai>=2.7.2",
   "reportlab",
   "pyttsx3",
   "pydantic>=2.0.0",
