@@ -19,8 +19,6 @@ try:
 except ImportError:
     OpenAI = None
 
-from rl_interview_coach import Action, FeedbackStrategy, InterviewCoachEnv, TaskBank, TaskType
-
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 BENCHMARK = os.getenv("BENCHMARK") or "interview-coach"
 
@@ -130,19 +128,19 @@ def _get_answer(client, prompt: str) -> str:
     raise RuntimeError("LLM returned empty content in proxy mode.")
 
 
-def _choose_strategy(attempt: int) -> FeedbackStrategy:
+def _choose_strategy(attempt: int) -> str:
     if attempt == 1:
-        return FeedbackStrategy.HINT
+        return "hint"
     if attempt == 2:
-        return FeedbackStrategy.MODERATE
-    return FeedbackStrategy.STRICT
+        return "moderate"
+    return "strict"
 
 
-def _pick_tasks():
+def _pick_tasks(task_bank, task_type):
     return [
-        TaskBank.get_tasks_by_difficulty(TaskType.EASY)[0],
-        TaskBank.get_tasks_by_difficulty(TaskType.MEDIUM)[0],
-        TaskBank.get_tasks_by_difficulty(TaskType.HARD)[0],
+        task_bank.get_tasks_by_difficulty(task_type.EASY)[0],
+        task_bank.get_tasks_by_difficulty(task_type.MEDIUM)[0],
+        task_bank.get_tasks_by_difficulty(task_type.HARD)[0],
     ]
 
 
@@ -178,11 +176,16 @@ def run_inference() -> Dict:
     client = _create_proxy_client()
     _preflight_proxy_call(client)
 
+    try:
+        from rl_interview_coach import Action, InterviewCoachEnv, TaskBank, TaskType
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import environment package: {exc}")
+
     env = InterviewCoachEnv(seed=42, max_attempts=MAX_ATTEMPTS, target_grade=0.80)
 
     task_scores = []
 
-    for task in _pick_tasks():
+    for task in _pick_tasks(TaskBank, TaskType):
         env.reset(task)
         _log_start(task.task_id)
 
@@ -209,7 +212,7 @@ def run_inference() -> Dict:
                 step_rewards.append(step_reward)
                 _log_step(
                     step=attempt,
-                    action=f"strategy({strategy.value})",
+                    action=f"strategy({strategy})",
                     reward=step_reward,
                     done=step_result.done,
                     error=None,
