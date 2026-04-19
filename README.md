@@ -278,4 +278,8 @@ Output: `reports/inference_scores.json` — model-specific benchmark metrics.
 ## License
 
 MIT License — see LICENSE file for details, or add before public distribution.
+Made with ❤️ by team CodeSync
 
+CodeSync:
+- [Sarthak Maheshwari](https://github.com/Sarthak1Developer)
+- [Shauriya Garg](https://github.com/ShauriyaDeveloper1)
