@@ -1,5 +1,6 @@
 const state = {
   username: null,
+  profile: null,
   questions: [],
   reports: [],
   posture: { status: "Not analyzed", feedback: "No posture analysis yet" },
@@ -8,8 +9,352 @@ const state = {
   confidenceChart: null,
   toneChart: null,
   speechTimers: {},
-  rlSessionStarted: false
+  rlSessionStarted: false,
+  practiceThread: null,
+  coachSummary: null,
+  firebase: {
+    auth: null,
+    enabled: false,
+    serverEnabled: false,
+    webConfigured: false,
+    webConfig: null,
+  }
 };
+
+function skillLabel(skill) {
+  if (skill === "dsa") return "DSA";
+  if (skill === "system_design") return "System Design";
+  return "Communication";
+}
+
+function fmtSigned(num, decimals = 2) {
+  if (typeof num !== "number" || Number.isNaN(num)) return "-";
+  const sign = num >= 0 ? "+" : "";
+  return `${sign}${num.toFixed(decimals)}`;
+}
+
+function clamp01(num) {
+  if (typeof num !== "number" || Number.isNaN(num)) return 0;
+  return Math.max(0, Math.min(1, num));
+}
+
+async function refreshCoachSummary() {
+  try {
+    const summary = await api("/api/coach/summary");
+    state.coachSummary = summary;
+    return summary;
+  } catch (_e) {
+    state.coachSummary = null;
+    return null;
+  }
+}
+
+function applyCoachSettingsToUi(summary) {
+  const settings = summary?.settings;
+  if (!settings) return;
+
+  const personality = document.getElementById("coachPersonality");
+  const adaptive = document.getElementById("adaptivePersonality");
+  const fixWeakness = document.getElementById("fixWeaknessMode");
+
+  if (personality) personality.value = settings.coach_personality || "friendly";
+  if (adaptive) adaptive.checked = Boolean(settings.adaptive_personality);
+  if (fixWeakness) fixWeakness.checked = settings.training_mode === "fix_weakness";
+
+  const note = document.getElementById("weaknessModeNote");
+  if (note) {
+    if (settings.training_mode === "fix_weakness") {
+      const weakest = summary?.skills?.weakest ? skillLabel(summary.skills.weakest) : "weakest";
+      note.textContent = `Mode: Fix Weakness → Only asks ${weakest} until improved.`;
+    } else {
+      note.textContent = "Mode: Random interview questions.";
+    }
+  }
+}
+
+function renderCoachSummaryToProgress(summary) {
+  if (!summary) return;
+  const readinessEl = document.getElementById("readinessNumbers");
+  const skillsEl = document.getElementById("skillBreakdown");
+  const weakestEl = document.getElementById("weakestSkillNote");
+  const effEl = document.getElementById("effectivenessNumbers");
+  const scorecardEl = document.getElementById("scorecardNumbers");
+
+  const readiness = summary?.readiness?.readiness || {};
+  if (readinessEl) {
+    readinessEl.innerHTML = `Start: ${typeof readiness.start === "number" ? readiness.start.toFixed(2) : "-"}<br />End: ${typeof readiness.end === "number" ? readiness.end.toFixed(2) : "-"}`;
+  }
+
+  const s = summary?.skills?.scores || {};
+  if (skillsEl) {
+    const dsa = Math.round(clamp01(s.dsa) * 100);
+    const sys = Math.round(clamp01(s.system_design) * 100);
+    const comm = Math.round(clamp01(s.communication) * 100);
+    skillsEl.innerHTML = `DSA → ${dsa}%<br />System Design → ${sys}%<br />Communication → ${comm}%`;
+  }
+
+  if (weakestEl) {
+    const weakest = summary?.skills?.weakest || "communication";
+    const lvl = summary?.skills?.levels?.[weakest] || "";
+    weakestEl.textContent = `Weakest skill: ${skillLabel(weakest)}${lvl ? ` (${lvl})` : ""}. Then improve weakest.`;
+  }
+
+  const eff = summary?.effectiveness || {};
+  if (effEl) {
+    effEl.innerHTML = `Hint → ${fmtSigned(eff.hint)} improvement<br />Example → ${fmtSigned(eff.example)} improvement<br />Follow-up → ${fmtSigned(eff.follow_up)} improvement`;
+  }
+
+  const before = summary?.scorecard?.before || {};
+  const after = summary?.scorecard?.after || {};
+  if (scorecardEl) {
+    scorecardEl.innerHTML = `Before: ${typeof before.confidence === "number" ? before.confidence.toFixed(2) : "-"} / ${typeof before.clarity === "number" ? before.clarity.toFixed(2) : "-"} / ${typeof before.technical_depth === "number" ? before.technical_depth.toFixed(2) : "-"}<br />After: ${typeof after.confidence === "number" ? after.confidence.toFixed(2) : "-"} / ${typeof after.clarity === "number" ? after.clarity.toFixed(2) : "-"} / ${typeof after.technical_depth === "number" ? after.technical_depth.toFixed(2) : "-"}`;
+  }
+}
+
+function renderAgentBrain(result) {
+  const wrap = document.getElementById("agentBrain");
+  const out = document.getElementById("agentBrainText");
+  if (!wrap || !out) return;
+
+  const brain = result?.agent_brain;
+  if (!brain) {
+    wrap.classList.add("hidden");
+    out.textContent = "";
+    return;
+  }
+
+  const score = typeof brain?.state?.score === "number" ? brain.state.score.toFixed(2) : "-";
+  const weak = brain?.state?.weak ? skillLabel(brain.state.weak) : "-";
+  const action = brain?.action || "-";
+  const reason = brain?.reason || "-";
+  const example = brain?.example;
+
+  let text = `State:\n- Score: ${score}\n- Weak: ${weak}\n\nAction:\n-> ${action}\n\nReason:\n-> ${reason}`;
+  if (example) {
+    text += `\n\nExample:\n${String(example).trim()}`;
+  }
+
+  out.textContent = text;
+  wrap.classList.remove("hidden");
+}
+
+function readFirebaseBootstrapConfig() {
+  const el = document.getElementById("firebaseBootstrap");
+  if (!el) return { enabled: false, web_config: null };
+  try {
+    const parsed = JSON.parse(el.textContent || "{}");
+    return {
+      enabled: Boolean(parsed?.enabled),
+      web_config: parsed?.web_config && typeof parsed.web_config === "object" ? parsed.web_config : null,
+    };
+  } catch (_e) {
+    return { enabled: false, web_config: null };
+  }
+}
+
+function initFirebaseEmailLinkAuth() {
+  const box = document.getElementById("firebaseEmailLinkBox");
+  const boot = readFirebaseBootstrapConfig();
+  const cfg = boot.web_config;
+
+  state.firebase.serverEnabled = Boolean(boot.enabled);
+  state.firebase.webConfig = cfg;
+  state.firebase.webConfigured = Boolean(cfg && cfg.apiKey && cfg.authDomain && cfg.projectId);
+  state.firebase.enabled = state.firebase.webConfigured;
+
+  if (!state.firebase.webConfigured || typeof window.firebase === "undefined") {
+    if (box) box.classList.add("hidden");
+    return;
+  }
+
+  try {
+    if (!firebase.apps?.length) {
+      firebase.initializeApp(cfg);
+    }
+    state.firebase.auth = firebase.auth();
+    if (box) box.classList.remove("hidden");
+  } catch (_e) {
+    state.firebase.auth = null;
+    state.firebase.enabled = false;
+    if (box) box.classList.add("hidden");
+  }
+}
+
+async function sendFirebaseEmailSignInLink() {
+  if (!state.firebase.auth) {
+    showToast("Firebase email link is not configured.", "error");
+    return;
+  }
+
+  const email = document.getElementById("emailLinkEmail")?.value?.trim();
+  if (!email) {
+    showToast("Please enter your email address.", "error");
+    return;
+  }
+
+  setLoading(true, "Sending sign-in link...");
+  try {
+    const actionCodeSettings = {
+      url: window.location.origin + window.location.pathname,
+      handleCodeInApp: true,
+    };
+    await state.firebase.auth.sendSignInLinkToEmail(email, actionCodeSettings);
+    window.localStorage.setItem("firebaseEmailForSignIn", email);
+    setLoading(false);
+    showToast("Sign-in link sent. Check your email.", "success");
+  } catch (e) {
+    setLoading(false);
+    showToast(e?.message || "Unable to send sign-in link.", "error");
+  }
+}
+
+async function completeFirebaseEmailLinkSignIn() {
+  if (!state.firebase.auth) {
+    return;
+  }
+
+  const url = window.location.href;
+  if (!state.firebase.auth.isSignInWithEmailLink(url)) {
+    return;
+  }
+
+  const storedEmail = window.localStorage.getItem("firebaseEmailForSignIn") || "";
+  const inputEmail = document.getElementById("emailLinkEmail")?.value?.trim() || "";
+  const email = storedEmail || inputEmail;
+  if (!email) {
+    showToast("Enter your email to complete sign-in.", "error");
+    return;
+  }
+
+  if (!state.firebase.serverEnabled) {
+    showToast("Server Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_* env vars.", "error");
+    return;
+  }
+
+  setLoading(true, "Signing you in...");
+  try {
+    const cred = await state.firebase.auth.signInWithEmailLink(email, url);
+    const user = cred?.user;
+    const idToken = user ? await user.getIdToken() : "";
+    if (!idToken) throw new Error("Unable to get Firebase token");
+
+    await api("/api/auth/firebase/session", { method: "POST", body: { id_token: idToken } });
+    window.localStorage.removeItem("firebaseEmailForSignIn");
+    try {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } catch (_e) {
+      // Ignore.
+    }
+
+    setLoading(false);
+    await loginFlow();
+    showToast("Signed in via email link.", "success");
+  } catch (e) {
+    setLoading(false);
+    showToast(e?.message || "Email link sign-in failed.", "error");
+  }
+}
+
+function resetPracticeThread(reason = "") {
+  state.practiceThread = null;
+
+  const thread = document.getElementById("practiceThread");
+  const items = document.getElementById("practiceThreadItems");
+  const promptText = document.getElementById("practicePromptText");
+
+  if (items) items.innerHTML = "";
+  if (thread) thread.classList.add("hidden");
+
+  // Reset prompt to the selected/root question.
+  const q = currentQuestion();
+  if (promptText) promptText.textContent = q;
+
+  if (reason) showToast(reason);
+}
+
+function getActivePracticeQuestion() {
+  if (state.practiceThread?.stopped) return currentQuestion();
+  if (state.practiceThread?.nextQuestion) return state.practiceThread.nextQuestion;
+  return currentQuestion();
+}
+
+function ensurePracticeThread(rootQuestion) {
+  if (state.practiceThread && !state.practiceThread.stopped) return;
+  state.practiceThread = {
+    rootQuestion,
+    turns: [],
+    nextQuestion: null,
+    stopped: false
+  };
+}
+
+function appendPracticeTurn(question, answer) {
+  const thread = document.getElementById("practiceThread");
+  const items = document.getElementById("practiceThreadItems");
+  if (!thread || !items) return;
+
+  thread.classList.remove("hidden");
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "practice-thread-item";
+
+  const qLabel = document.createElement("small");
+  qLabel.textContent = "Question";
+  const qText = document.createElement("strong");
+  qText.textContent = question;
+  const qBlock = document.createElement("div");
+  qBlock.className = "practice-thread-block";
+  qBlock.appendChild(qLabel);
+  qBlock.appendChild(qText);
+
+  const aLabel = document.createElement("small");
+  aLabel.textContent = "Your answer";
+  const aText = document.createElement("div");
+  aText.className = "practice-thread-answer";
+  aText.textContent = answer;
+  const aBlock = document.createElement("div");
+  aBlock.className = "practice-thread-block";
+  aBlock.appendChild(aLabel);
+  aBlock.appendChild(aText);
+
+  wrapper.appendChild(qBlock);
+  wrapper.appendChild(aBlock);
+  items.appendChild(wrapper);
+}
+
+function setPracticePrompt(question) {
+  const prompt = document.getElementById("practicePrompt");
+  const promptText = document.getElementById("practicePromptText");
+  if (!prompt || !promptText) return;
+  prompt.classList.remove("hidden");
+  promptText.textContent = String(question || "").trim();
+}
+
+function stopPracticeInterview() {
+  if (!state.practiceThread) return;
+  state.practiceThread.stopped = true;
+  state.practiceThread.nextQuestion = null;
+  setPracticePrompt(currentQuestion());
+  showToast("Interview stopped. Submit again to start a new flow.");
+}
+
+function speakText(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return;
+  if (!("speechSynthesis" in window) || typeof window.SpeechSynthesisUtterance !== "function") {
+    return;
+  }
+
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
+  } catch (_e) {
+    // Ignore browser speech failures.
+  }
+}
 
 function isRlModeEnabled() {
   const el = document.getElementById("useRlMode");
@@ -42,7 +387,7 @@ function updateRlSummary(result) {
 
   document.getElementById("rlAttempt").textContent = attempt ?? "-";
   document.getElementById("rlReward").textContent =
-    typeof totalReward === "number" ? totalReward.toFixed(2) : "-";
+    typeof totalReward === "number" ? Math.min(Math.max(totalReward, 0), 1).toFixed(2) : "-";
   document.getElementById("rlAvgGrade").textContent =
     typeof avgGrade === "number" ? avgGrade.toFixed(2) : "-";
   document.getElementById("rlStrategy").textContent = strategy || "-";
@@ -96,14 +441,22 @@ async function ensureRlSession() {
   if (state.rlSessionStarted) return;
 
   const difficulty = document.getElementById("rlDifficulty")?.value || "medium";
-  await api("/api/rl/new-session", { method: "POST", body: { difficulty } });
+  const fixWeakness = Boolean(document.getElementById("fixWeaknessMode")?.checked);
+  await api("/api/rl/new-session", {
+    method: "POST",
+    body: {
+      difficulty,
+      training_mode: fixWeakness ? "fix_weakness" : "normal",
+      target_skill: "auto",
+    }
+  });
   state.rlSessionStarted = true;
   setRlStatus(`RL session active (${difficulty})`);
 }
 
 function buildRlFeedback(result) {
   const attempt = result?.session_progress?.attempt ?? "-";
-  const reward = typeof result?.reward === "number" ? result.reward.toFixed(2) : "-";
+  const reward = typeof result?.reward === "number" ? Math.min(Math.max(result.reward, 0), 1).toFixed(2) : "-";
   const strategy = result?.rl_strategy || "none";
   const rlFeedback = result?.rl_feedback || "";
   return `${result.feedback}\n\nRL Strategy: ${strategy}\nRL Feedback: ${rlFeedback}\nAttempt: ${attempt}\nReward: ${reward}`;
@@ -143,6 +496,17 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+async function apiUpload(path, formData, options = {}) {
+  const res = await fetch(path, {
+    method: "POST",
+    body: formData,
+    ...options,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed");
@@ -265,6 +629,142 @@ function initTabs() {
   });
 }
 
+function renderAtsResults(result) {
+  const resultsEl = document.getElementById("atsResults");
+  const groupsEl = document.getElementById("atsGroups");
+  const scoreEl = document.getElementById("atsScore");
+  const issuesEl = document.getElementById("atsIssues");
+  if (!resultsEl || !groupsEl || !scoreEl || !issuesEl) return;
+
+  const score = Number.isFinite(result?.score) ? Math.max(0, Math.min(100, result.score)) : 0;
+  const issues = Number.isFinite(result?.issues) ? Math.max(0, result.issues) : 0;
+  scoreEl.textContent = String(score);
+  issuesEl.textContent = String(issues);
+
+  groupsEl.innerHTML = "";
+  const groups = Array.isArray(result?.groups) ? result.groups : [];
+
+  groups.forEach((group, idx) => {
+    const details = document.createElement("details");
+    details.className = "ats-group";
+    details.open = idx === 0;
+
+    const summary = document.createElement("summary");
+    summary.className = "ats-group-summary";
+
+    const title = document.createElement("span");
+    title.className = "ats-group-title";
+    title.textContent = group?.label || "";
+
+    const badge = document.createElement("span");
+    badge.className = "ats-badge";
+    const percent = Number.isFinite(group?.percent) ? Math.max(0, Math.min(100, group.percent)) : 0;
+    badge.textContent = `${percent}%`;
+
+    summary.appendChild(title);
+    summary.appendChild(badge);
+    details.appendChild(summary);
+
+    const itemsWrap = document.createElement("div");
+    itemsWrap.className = "ats-items";
+
+    const items = Array.isArray(group?.items) ? group.items : [];
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "ats-item";
+
+      const icon = document.createElement("span");
+      const hasIssue = (item?.issues || 0) > 0 || item?.status === "issue";
+      icon.className = `ats-icon ${hasIssue ? "issue" : "ok"}`;
+      icon.textContent = hasIssue ? "✕" : "✓";
+
+      const label = document.createElement("span");
+      label.className = "ats-item-label";
+      label.textContent = item?.label || "";
+
+      const pill = document.createElement("span");
+      pill.className = `ats-pill ${hasIssue ? "issue" : "ok"}`;
+      const issueCount = Number.isFinite(item?.issues) ? Math.max(0, item.issues) : 0;
+      if (!hasIssue) {
+        pill.textContent = "No issues";
+      } else {
+        pill.textContent = `${issueCount || 1} issue${issueCount === 1 ? "" : "s"}`;
+      }
+
+      row.appendChild(icon);
+      row.appendChild(label);
+      row.appendChild(pill);
+
+      const hasHelp = hasIssue && ((item?.what || "").trim() || (item?.how || "").trim());
+      if (hasHelp) {
+        const help = document.createElement("div");
+        help.className = "ats-item-help";
+        const what = document.createElement("div");
+        what.className = "ats-item-help-line";
+        what.textContent = `What's wrong: ${item.what}`;
+        const how = document.createElement("div");
+        how.className = "ats-item-help-line";
+        how.textContent = `How to fix: ${item.how}`;
+        help.appendChild(what);
+        help.appendChild(how);
+
+        const block = document.createElement("div");
+        block.className = "ats-item-block";
+        block.appendChild(row);
+        block.appendChild(help);
+        itemsWrap.appendChild(block);
+        return;
+      }
+
+      itemsWrap.appendChild(row);
+    });
+
+    details.appendChild(itemsWrap);
+    groupsEl.appendChild(details);
+  });
+
+  resultsEl.classList.remove("hidden");
+}
+
+function initAtsChecker() {
+  const fileInput = document.getElementById("atsResumeFile");
+  const btn = document.getElementById("atsCheckBtn");
+  const msg = document.getElementById("atsMessage");
+  const resultsEl = document.getElementById("atsResults");
+
+  if (fileInput) {
+    fileInput.addEventListener("change", () => {
+      if (msg) msg.textContent = "";
+      if (resultsEl) resultsEl.classList.add("hidden");
+    });
+  }
+
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    try {
+      if (msg) msg.textContent = "";
+      const file = fileInput?.files?.[0];
+      if (!file) {
+        showToast("Please upload a resume file.", "error");
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append("resume", file);
+
+      setLoading(true, "Checking ATS score...");
+      const result = await apiUpload("/api/ats/check", fd);
+      renderAtsResults(result);
+      showToast("ATS check complete", "success");
+    } catch (e) {
+      if (msg) msg.textContent = e.message || "ATS check failed";
+      showToast(e.message || "ATS check failed", "error");
+    } finally {
+      setLoading(false);
+    }
+  });
+}
+
 function togglePracticeMode() {
   const mode = document.getElementById("practiceMode").value;
   document.getElementById("audioPractice").classList.toggle("hidden", mode !== "Record Audio Response");
@@ -344,15 +844,62 @@ async function doLogin() {
 
 async function doSignup() {
   try {
+    const full_name = document.getElementById("signupFullName")?.value?.trim();
+    const email = document.getElementById("signupEmail")?.value?.trim();
+    const phone = document.getElementById("signupPhone")?.value?.trim();
+    const university = document.getElementById("signupUniversity")?.value?.trim();
+    const college_year = document.getElementById("signupCollegeYear")?.value?.trim();
+    const degree = document.getElementById("signupDegree")?.value?.trim();
+    const major = document.getElementById("signupMajor")?.value?.trim();
+    const linkedin = document.getElementById("signupLinkedIn")?.value?.trim();
+    const about = document.getElementById("signupAbout")?.value?.trim();
+    const otp = document.getElementById("signupOtp")?.value?.trim();
+
     const username = document.getElementById("signupUsername").value.trim();
     const password = document.getElementById("signupPassword").value;
     const confirm_password = document.getElementById("signupConfirmPassword").value;
     setLoading(true, "Creating account...");
-    await api("/api/signup", { method: "POST", body: { username, password, confirm_password } });
+    await api("/api/signup", {
+      method: "POST",
+      body: {
+        username,
+        password,
+        confirm_password,
+        full_name,
+        email,
+        phone,
+        university,
+        college_year,
+        degree,
+        major,
+        linkedin,
+        about,
+        otp,
+      },
+    });
     setLoading(false);
     setMessage("authMessage", "Account created. Please login.");
     switchAuthMode("login");
     showToast("Account created. Please login.", "success");
+  } catch (e) {
+    setLoading(false);
+    setMessage("authMessage", e.message);
+    showToast(e.message, "error");
+  }
+}
+
+async function sendEmailOtp() {
+  try {
+    const email = document.getElementById("signupEmail")?.value?.trim();
+    if (!email) {
+      showToast("Please enter your email first.", "error");
+      return;
+    }
+    setLoading(true, "Sending OTP...");
+    const result = await api("/api/auth/send-email-otp", { method: "POST", body: { email } });
+    setLoading(false);
+    setMessage("authMessage", result.message || "OTP sent. Check your inbox.");
+    showToast(result.message || "OTP sent", "success");
   } catch (e) {
     setLoading(false);
     setMessage("authMessage", e.message);
@@ -366,21 +913,100 @@ async function loginFlow() {
   document.getElementById("appSection").classList.add("hidden");
   document.getElementById("logoutBtn").classList.add("hidden");
 
+  // Reset account view while we check auth.
+  state.username = null;
+  state.profile = null;
+  resetAccountProfileForm();
+
   const me = await api("/api/me");
   if (!me.logged_in) {
     return;
   }
 
   state.username = me.username;
+  state.profile = me.profile && typeof me.profile === "object" ? me.profile : null;
   document.getElementById("authSection").classList.add("hidden");
   document.getElementById("appSection").classList.remove("hidden");
   document.getElementById("logoutBtn").classList.remove("hidden");
   document.getElementById("accountUsername").textContent = `Username: ${state.username}`;
+  populateAccountProfileForm(state.profile);
 
   await loadMeta();
   await loadReports();
   await loadProgress();
   showToast(`Welcome, ${state.username}`);
+}
+
+function resetAccountProfileForm() {
+  const ids = [
+    "accountFullName",
+    "accountEmail",
+    "accountPhone",
+    "accountUniversity",
+    "accountCollegeYear",
+    "accountDegree",
+    "accountMajor",
+    "accountLinkedIn",
+    "accountAbout",
+  ];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+}
+
+function populateAccountProfileForm(profile) {
+  if (!profile || typeof profile !== "object") {
+    resetAccountProfileForm();
+    return;
+  }
+
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value == null ? "" : String(value);
+  };
+
+  setValue("accountFullName", profile.full_name);
+  setValue("accountEmail", profile.email);
+  setValue("accountPhone", profile.phone);
+  setValue("accountUniversity", profile.university);
+  setValue("accountCollegeYear", profile.college_year);
+  setValue("accountDegree", profile.degree);
+  setValue("accountMajor", profile.major);
+  setValue("accountLinkedIn", profile.linkedin);
+  setValue("accountAbout", profile.about);
+}
+
+function readAccountProfileForm() {
+  const get = (id) => document.getElementById(id)?.value?.trim() || "";
+  return {
+    full_name: get("accountFullName"),
+    email: get("accountEmail"),
+    phone: get("accountPhone"),
+    university: get("accountUniversity"),
+    college_year: get("accountCollegeYear"),
+    degree: get("accountDegree"),
+    major: get("accountMajor"),
+    linkedin: get("accountLinkedIn"),
+    about: get("accountAbout"),
+  };
+}
+
+async function saveAccountProfile() {
+  setLoading(true, "Saving profile...");
+  try {
+    const payload = readAccountProfileForm();
+    const result = await api("/api/profile", { method: "POST", body: payload });
+    state.profile = result.profile && typeof result.profile === "object" ? result.profile : payload;
+    populateAccountProfileForm(state.profile);
+    showToast("Profile updated", "success");
+  } catch (e) {
+    showToast(e.message || "Unable to save profile", "error");
+    throw e;
+  } finally {
+    setLoading(false);
+  }
 }
 
 async function loadMeta() {
@@ -395,6 +1021,9 @@ async function loadMeta() {
     option.textContent = q;
     select.appendChild(option);
   });
+
+  // Keep the practice prompt synced with the selected question.
+  setPracticePrompt(currentQuestion());
 }
 
 async function loadReports() {
@@ -509,15 +1138,29 @@ async function loadProgress() {
       }
     }
   });
+
+  const summary = await refreshCoachSummary();
+  if (summary) {
+    applyCoachSettingsToUi(summary);
+    renderCoachSummaryToProgress(summary);
+  }
 }
 
 async function submitTextPractice() {
-  const question = currentQuestion();
+  const question = getActivePracticeQuestion();
   const answer = document.getElementById("textAnswer").value.trim();
   if (!question || !answer) {
     showToast("Question and answer are required", "error");
     return;
   }
+
+  const rootQuestion = state.practiceThread?.rootQuestion || currentQuestion();
+  ensurePracticeThread(rootQuestion);
+  if (state.practiceThread.stopped) {
+    resetPracticeThread();
+    ensurePracticeThread(currentQuestion());
+  }
+  const turns = [...(state.practiceThread?.turns || []), { question, answer }];
 
   setLoading(true, "Analyzing text response...");
   let result;
@@ -528,6 +1171,8 @@ async function submitTextPractice() {
       body: {
         question,
         answer,
+        root_question: state.practiceThread.rootQuestion,
+        thread_turns: turns,
         task_difficulty: document.getElementById("rlDifficulty")?.value || "medium",
         use_agent_feedback: true
       }
@@ -542,26 +1187,43 @@ async function submitTextPractice() {
   } else {
     result = await api("/api/practice/text", {
       method: "POST",
-      body: { question, answer }
+      body: { question, answer, root_question: state.practiceThread.rootQuestion, thread_turns: turns }
     });
   }
   setLoading(false);
 
+  state.practiceThread.turns = turns;
+  appendPracticeTurn(question, answer);
+  state.practiceThread.nextQuestion = result.follow_up_question || null;
+  setPracticePrompt(state.practiceThread.nextQuestion || state.practiceThread.rootQuestion);
+  speakText(state.practiceThread.nextQuestion);
+
   document.getElementById("analysisResult").textContent = isRlModeEnabled()
     ? buildRlFeedback(result)
     : result.feedback;
+
+  renderAgentBrain(result);
+  document.getElementById("textAnswer").value = "";
   showToast("Text response analyzed", "success");
   await loadReports();
   await loadProgress();
 }
 
 async function submitAudioPractice() {
-  const question = currentQuestion();
+  const question = getActivePracticeQuestion();
   const transcription = document.getElementById("audioTranscript").value.trim();
   if (!question || !transcription) {
     showToast("Question and transcription are required", "error");
     return;
   }
+
+  const rootQuestion = state.practiceThread?.rootQuestion || currentQuestion();
+  ensurePracticeThread(rootQuestion);
+  if (state.practiceThread.stopped) {
+    resetPracticeThread();
+    ensurePracticeThread(currentQuestion());
+  }
+  const turns = [...(state.practiceThread?.turns || []), { question, answer: transcription }];
 
   setLoading(true, "Analyzing audio response...");
   let result;
@@ -572,6 +1234,8 @@ async function submitAudioPractice() {
       body: {
         question,
         answer: transcription,
+        root_question: state.practiceThread.rootQuestion,
+        thread_turns: turns,
         task_difficulty: document.getElementById("rlDifficulty")?.value || "medium",
         use_agent_feedback: true
       }
@@ -586,14 +1250,28 @@ async function submitAudioPractice() {
   } else {
     result = await api("/api/practice/audio", {
       method: "POST",
-      body: { question, transcription }
+      body: {
+        question,
+        transcription,
+        root_question: state.practiceThread.rootQuestion,
+        thread_turns: turns
+      }
     });
   }
   setLoading(false);
 
+  state.practiceThread.turns = turns;
+  appendPracticeTurn(question, transcription);
+  state.practiceThread.nextQuestion = result.follow_up_question || null;
+  setPracticePrompt(state.practiceThread.nextQuestion || state.practiceThread.rootQuestion);
+  speakText(state.practiceThread.nextQuestion);
+
   document.getElementById("analysisResult").textContent = isRlModeEnabled()
     ? buildRlFeedback(result)
     : result.feedback;
+
+  renderAgentBrain(result);
+  document.getElementById("audioTranscript").value = "";
   showToast("Audio response analyzed", "success");
   await loadReports();
   await loadProgress();
@@ -646,12 +1324,20 @@ function stopCamera() {
 }
 
 async function submitVideoPractice() {
-  const question = currentQuestion();
+  const question = getActivePracticeQuestion();
   const transcription = document.getElementById("videoTranscript").value.trim();
   if (!question || !transcription) {
     showToast("Question and transcription are required", "error");
     return;
   }
+
+  const rootQuestion = state.practiceThread?.rootQuestion || currentQuestion();
+  ensurePracticeThread(rootQuestion);
+  if (state.practiceThread.stopped) {
+    resetPracticeThread();
+    ensurePracticeThread(currentQuestion());
+  }
+  const turns = [...(state.practiceThread?.turns || []), { question, answer: transcription }];
 
   setLoading(true, "Submitting video practice...");
   let result;
@@ -662,6 +1348,8 @@ async function submitVideoPractice() {
       body: {
         question,
         answer: transcription,
+        root_question: state.practiceThread.rootQuestion,
+        thread_turns: turns,
         task_difficulty: document.getElementById("rlDifficulty")?.value || "medium",
         use_agent_feedback: true
       }
@@ -679,15 +1367,26 @@ async function submitVideoPractice() {
       body: {
         question,
         transcription,
-        posture: state.posture
+        posture: state.posture,
+        root_question: state.practiceThread.rootQuestion,
+        thread_turns: turns
       }
     });
   }
   setLoading(false);
 
+  state.practiceThread.turns = turns;
+  appendPracticeTurn(question, transcription);
+  state.practiceThread.nextQuestion = result.follow_up_question || null;
+  setPracticePrompt(state.practiceThread.nextQuestion || state.practiceThread.rootQuestion);
+  speakText(state.practiceThread.nextQuestion);
+
   document.getElementById("analysisResult").textContent = isRlModeEnabled()
     ? buildRlFeedback(result)
     : result.feedback;
+
+  renderAgentBrain(result);
+  document.getElementById("videoTranscript").value = "";
   showToast("Video practice submitted", "success");
   await loadReports();
   await loadProgress();
@@ -744,6 +1443,7 @@ async function generateMockInterview() {
 
 function setupEvents() {
   initTabs();
+  initAtsChecker();
 
   document.getElementById("loginBtn").addEventListener("click", doLogin);
   document.getElementById("signupBtn").addEventListener("click", doSignup);
@@ -771,6 +1471,27 @@ function setupEvents() {
   document.getElementById("toSignupLink").addEventListener("click", () => switchAuthMode("signup"));
   document.getElementById("toLoginLink").addEventListener("click", () => switchAuthMode("login"));
 
+  const sendOtpBtn = document.getElementById("sendEmailOtpBtn");
+  if (sendOtpBtn) {
+    sendOtpBtn.addEventListener("click", () => {
+      sendEmailOtp().catch(() => undefined);
+    });
+  }
+
+  const sendEmailLinkBtn = document.getElementById("sendEmailLinkBtn");
+  if (sendEmailLinkBtn) {
+    sendEmailLinkBtn.addEventListener("click", () => {
+      sendFirebaseEmailSignInLink().catch(() => undefined);
+    });
+  }
+
+  const completeEmailLinkBtn = document.getElementById("completeEmailLinkBtn");
+  if (completeEmailLinkBtn) {
+    completeEmailLinkBtn.addEventListener("click", () => {
+      completeFirebaseEmailLinkSignIn().catch(() => undefined);
+    });
+  }
+
   document.getElementById("logoutBtn").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST" });
     stopCamera();
@@ -778,7 +1499,18 @@ function setupEvents() {
     showToast("Logged out");
   });
 
+  const saveAccountBtn = document.getElementById("saveAccountBtn");
+  if (saveAccountBtn) {
+    saveAccountBtn.addEventListener("click", () => {
+      saveAccountProfile().catch(() => undefined);
+    });
+  }
+
   document.getElementById("practiceMode").addEventListener("change", togglePracticeMode);
+  document.getElementById("practiceMode").addEventListener("change", () => {
+    resetPracticeThread();
+    document.getElementById("analysisResult").textContent = "";
+  });
   document.getElementById("useRlMode").addEventListener("change", async (event) => {
     if (event.target.checked) {
       state.rlSessionStarted = false;
@@ -799,9 +1531,78 @@ function setupEvents() {
     }
   });
 
+  const personality = document.getElementById("coachPersonality");
+  if (personality) {
+    personality.addEventListener("change", async () => {
+      try {
+        await api("/api/coach/settings", {
+          method: "POST",
+          body: { coach_personality: personality.value }
+        });
+        state.rlSessionStarted = false;
+        resetRlSummary();
+        showToast("Coach personality updated", "success");
+        await loadProgress();
+      } catch (e) {
+        showToast(e.message || "Failed to update", "error");
+      }
+    });
+  }
+
+  const adaptive = document.getElementById("adaptivePersonality");
+  if (adaptive) {
+    adaptive.addEventListener("change", async () => {
+      try {
+        await api("/api/coach/settings", {
+          method: "POST",
+          body: { adaptive_personality: Boolean(adaptive.checked) }
+        });
+        state.rlSessionStarted = false;
+        resetRlSummary();
+        showToast("Adaptive personality updated", "success");
+        await loadProgress();
+      } catch (e) {
+        showToast(e.message || "Failed to update", "error");
+      }
+    });
+  }
+
+  const fixWeakness = document.getElementById("fixWeaknessMode");
+  if (fixWeakness) {
+    fixWeakness.addEventListener("change", async () => {
+      try {
+        await api("/api/coach/settings", {
+          method: "POST",
+          body: { training_mode: fixWeakness.checked ? "fix_weakness" : "normal", target_skill: "auto" }
+        });
+        state.rlSessionStarted = false;
+        resetRlSummary();
+        showToast("Training mode updated", "success");
+        await loadProgress();
+      } catch (e) {
+        showToast(e.message || "Failed to update", "error");
+      }
+    });
+  }
+
   document.getElementById("questionSelect").addEventListener("change", (e) => {
     document.getElementById("customQuestion").classList.toggle("hidden", e.target.value !== "Add custom question...");
+    resetPracticeThread("Question changed — starting a new practice flow.");
+    document.getElementById("analysisResult").textContent = "";
+    setPracticePrompt(currentQuestion());
   });
+
+  const customQuestion = document.getElementById("customQuestion");
+  if (customQuestion) {
+    customQuestion.addEventListener("input", () => {
+      if (!state.practiceThread) setPracticePrompt(currentQuestion());
+    });
+  }
+
+  const stopBtn = document.getElementById("stopInterviewBtn");
+  if (stopBtn) {
+    stopBtn.addEventListener("click", stopPracticeInterview);
+  }
 
   document.getElementById("analyzeTextBtn").addEventListener("click", () => {
     submitTextPractice().catch((e) => {
@@ -843,13 +1644,16 @@ function setupEvents() {
     });
   });
 
-  document.getElementById("generateMockBtn").addEventListener("click", () => {
-    generateMockInterview().catch((e) => {
-      setLoading(false);
-      setMessage("mockMessage", e.message);
-      showToast(e.message, "error");
+  const mockBtn = document.getElementById("generateMockBtn");
+  if (mockBtn) {
+    mockBtn.addEventListener("click", () => {
+      generateMockInterview().catch((e) => {
+        setLoading(false);
+        setMessage("mockMessage", e.message);
+        showToast(e.message, "error");
+      });
     });
-  });
+  }
 
   document.getElementById("downloadPdfBtn").addEventListener("click", () => {
     const startDate = document.getElementById("startDate").value;
@@ -874,13 +1678,21 @@ function setupEvents() {
   });
 }
 
-setupEvents();
-setupPasswordVisibility();
-initParallaxBackground();
-initCardTilt();
-resetRlSummary();
-updatePostureUi(state.posture.status, state.posture.feedback);
-switchAuthMode("login");
-loginFlow().catch(() => {
+async function bootstrap() {
+  setupEvents();
+  setupPasswordVisibility();
+  initParallaxBackground();
+  initCardTilt();
+  resetRlSummary();
+  updatePostureUi(state.posture.status, state.posture.feedback);
+  switchAuthMode("login");
+
+  initFirebaseEmailLinkAuth();
+  // If the user landed via a Firebase email-link sign-in, complete it before checking /api/me.
+  await completeFirebaseEmailLinkSignIn();
+  await loginFlow();
+}
+
+bootstrap().catch(() => {
   setMessage("authMessage", "Unable to initialize app.");
 });

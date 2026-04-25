@@ -141,7 +141,7 @@
       "hint": 0.0
     }
   },
-  "episodes_trained": 50,
-  "epsilon": 0.3641696800871167,
+  "episodes_trained": 59,
+  "epsilon": 0.3481060019490814,
   "total_reward": -47.235800000000104
 }

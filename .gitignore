@@ -7,3 +7,10 @@ __pycache__/
 reports/
 users.json
 *.log
+
+openenv_env/
+nltk_data/
+.tmp_pip_meta/
+ai_powered_interview_coach.egg-info/
+cookies.txt
+tmp_resume.txt

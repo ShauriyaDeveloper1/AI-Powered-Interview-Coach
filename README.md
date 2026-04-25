@@ -194,7 +194,48 @@ API_KEY=your-proxy-api-key
 
 # Optional: Production security
 FLASK_SECRET_KEY=your_secret_key_here
+
+# Optional: Email OTP (signup verification)
+# If SMTP_* is not set, the app runs in dev mode and prints OTPs to the server console.
+SMTP_HOST=smtp.yourprovider.com
+SMTP_PORT=587
+SMTP_USER=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+SMTP_FROM=your_from_address@example.com
+
+# Optional: Firebase Admin (creates/updates Firebase Auth user on successful OTP-verified signup)
+# NOTE: Firebase does not natively send a 6-digit OTP to email; this project uses server-side email OTP,
+# and (optionally) syncs the verified user into Firebase Auth.
+FIREBASE_SERVICE_ACCOUNT_PATH=path/to/serviceAccountKey.json
+# or
+FIREBASE_SERVICE_ACCOUNT_JSON={...service account json...}
+
+# Optional: Firebase Web (enables Email-Link sign-in in the UI)
+# Put these values from Firebase Console → Project settings → Your apps (Web app config).
+FIREBASE_WEB_API_KEY=...
+FIREBASE_WEB_AUTH_DOMAIN=your-project.firebaseapp.com
+FIREBASE_WEB_PROJECT_ID=your-project-id
+FIREBASE_WEB_APP_ID=...
+# Optional extras (only needed if you use these Firebase products)
+FIREBASE_WEB_STORAGE_BUCKET=...
+FIREBASE_WEB_MESSAGING_SENDER_ID=...
 ```
+
+### Firebase email-link sign-in (passwordless login)
+
+This project supports Firebase **Email Link** sign-in in the Login panel.
+
+1. In Firebase Console → Authentication → Sign-in method → **Email/Password**:
+	- Enable it
+	- Enable **Email link (passwordless sign-in)**
+2. In Firebase Console → Authentication → Settings → **Authorized domains**:
+	- Add `localhost` (recommended for local dev)
+3. Set both:
+	- `FIREBASE_SERVICE_ACCOUNT_PATH` (server-side verification via Admin SDK)
+	- `FIREBASE_WEB_*` variables (client-side Firebase Web SDK)
+4. Restart the Flask app and use **Send Link** → click the emailed link → **Complete sign-in** if prompted.
+
+Note: The backend maps the Firebase email to an existing local account by matching `profile.email`. If the email is not found, sign up first.
 
 **Notes:**
 - `.env` is auto-loaded by app.py and baseline.py (via python-dotenv).
@@ -219,7 +260,9 @@ On Windows without PATH shim:
 python app.py
 ```
 
-Open `http://127.0.0.1:5000` in your browser.
+Open `http://127.0.0.1:7860` in your browser.
+
+To override the port, set `PORT` before running (e.g., `PORT=5000`).
 
 ### Run baseline evaluation (requires `API_KEY` and `API_BASE_URL` if using AIML)
 ```powershell

@@ -7,15 +7,22 @@ opencv-python==4.8.0.76
 pandas==2.0.3
 matplotlib==3.7.2
 requests==2.31.0
+pdfplumber==0.11.5
+python-docx==1.1.2
+pyspellchecker==0.8.1
+firebase-admin==6.5.0
 Pillow==10.0.0
 moviepy==1.0.3
-gTTS==2.3.2
+# NOTE: gTTS currently requires click<8.2, but openenv-core pulls click>=8.2.1.
+# The app has an offline TTS fallback (pyttsx3), so gTTS is optional.
+# If you want gTTS anyway, install it in a separate environment or remove openenv-core.
+# gTTS
 pydub==0.25.1
-python-dotenv==1.0.0
+python-dotenv>=1.1.0
 openai>=2.7.2
 reportlab==4.0.4
 pyttsx3==2.90
-pydantic==2.3.0
+pydantic>=2.0.0
 PyYAML==6.0.1
 openenv-core>=0.2.0
 

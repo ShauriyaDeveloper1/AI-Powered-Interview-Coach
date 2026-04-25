@@ -5,12 +5,15 @@ import json
 import os
 import queue
 import re
+import secrets
+import smtplib
 import tempfile
 import threading
 import time
 import uuid
 import importlib
 from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
 
 import cv2
@@ -19,10 +22,15 @@ import numpy as np
 import pandas as pd
 import requests
 from flask import Flask, jsonify, render_template, request, send_file, session
-from gtts import gTTS
+try:
+    from gtts import gTTS
+except ImportError:
+    gTTS = None
 from nltk.corpus import stopwords
 from nltk.sentiment import SentimentIntensityAnalyzer
 from werkzeug.utils import secure_filename
+
+from ats_checker import ALLOWED_EXTENSIONS, analyze_resume_file
 
 try:
     import speech_recognition as sr
@@ -36,6 +44,31 @@ try:
 except Exception:
     pass
 
+_firebase_available = False
+firebase_auth = None
+_firebase_app = None
+
+try:
+    import firebase_admin  # type: ignore
+    from firebase_admin import auth as firebase_auth  # type: ignore
+    from firebase_admin import credentials  # type: ignore
+
+    _svc_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    _svc_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+
+    if _svc_json:
+        cred = credentials.Certificate(json.loads(_svc_json))
+        _firebase_app = firebase_admin.initialize_app(cred)
+        _firebase_available = True
+    elif _svc_path and os.path.exists(_svc_path):
+        cred = credentials.Certificate(_svc_path)
+        _firebase_app = firebase_admin.initialize_app(cred)
+        _firebase_available = True
+except Exception:
+    _firebase_available = False
+    firebase_auth = None
+    _firebase_app = None
+
 try:
     from openai import OpenAI
 
@@ -45,14 +78,38 @@ except ImportError:
 
     _OPENAI_NEW = False
 
-import moviepy.editor as mp
+# MoviePy v1 exposes `moviepy.editor` and mutating setters like `.set_duration()`.
+# MoviePy v2 removed `moviepy.editor` and uses immutable-style `.with_duration()`.
+try:
+    import moviepy.editor as mp  # type: ignore
+except Exception:
+    try:
+        import moviepy as mp  # type: ignore
+    except Exception:
+        mp = None
 from PIL import Image, ImageDraw
+
+
+# Prefer bundled NLTK data (repo-local) when available.
+_LOCAL_NLTK_DATA = Path(__file__).resolve().parent / "nltk_data"
+try:
+    if _LOCAL_NLTK_DATA.exists():
+        local_path = str(_LOCAL_NLTK_DATA)
+        if local_path not in nltk.data.path:
+            nltk.data.path.insert(0, local_path)
+except Exception:
+    pass
 
 
 # Ensure necessary NLTK resources are available.
 def ensure_nltk_resources():
     # Avoid blocking startup on hosted environments unless explicitly enabled.
     auto_download = os.getenv("NLTK_AUTO_DOWNLOAD", "0").strip() == "1"
+    # If NLTK_DATA is set, prefer downloading to its first path segment.
+    nltk_data_dir = os.getenv("NLTK_DATA")
+    download_dir = None
+    if nltk_data_dir:
+        download_dir = nltk_data_dir.split(os.pathsep)[0]
     resources = [
         ("tokenizers/punkt", "punkt"),
         ("tokenizers/punkt_tab", "punkt_tab"),
@@ -62,10 +119,18 @@ def ensure_nltk_resources():
     for path, name in resources:
         try:
             nltk.data.find(path)
-        except LookupError:
+        except (LookupError, OSError):
             if auto_download:
                 try:
-                    nltk.download(name, quiet=True)
+                    if download_dir:
+                        nltk.download(
+                            name,
+                            quiet=True,
+                            download_dir=download_dir,
+                            force=True,
+                        )
+                    else:
+                        nltk.download(name, quiet=True, force=True)
                 except Exception:
                     pass
 
@@ -85,6 +150,9 @@ if os.getenv("SPACE_ID"):
 
 USER_DB_FILE = "users.json"
 REPORTS_DIR = "reports"
+
+_email_otp_store = {}
+_OTP_TTL_SECONDS = 10 * 60
 
 api_key = os.getenv("API_KEY") or os.getenv("HF_TOKEN")
 openai_base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
@@ -182,15 +250,113 @@ def user_exists(username):
     return username in _load_users()
 
 
-def add_user(username, password):
+def add_user(username, password, profile=None, email_verified=False):
     users = _load_users()
-    users[username] = hash_password(password)
+    record = {
+        "password_hash": hash_password(password),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "email_verified": bool(email_verified),
+        "profile": profile or {},
+    }
+    users[username] = record
     _save_users(users)
 
 
 def authenticate_user(username, password):
     users = _load_users()
-    return username in users and users[username] == hash_password(password)
+    if username not in users:
+        return False
+    record = users[username]
+    if isinstance(record, str):
+        # Backward compatible: older DB stored just the password hash.
+        return record == hash_password(password)
+    if isinstance(record, dict):
+        return (record.get("password_hash") or "") == hash_password(password)
+    return False
+
+
+def _is_valid_email(email: str) -> bool:
+    email = (email or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", email))
+
+
+def _normalize_phone(phone: str) -> str:
+    phone = (phone or "").strip()
+    phone = re.sub(r"[^0-9+]", "", phone)
+    return phone
+
+
+def _otp_hash(email: str, otp: str) -> str:
+    secret = os.getenv("OTP_SECRET") or app.secret_key
+    payload = f"{email.strip().lower()}::{otp.strip()}::{secret}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _send_email_otp(email: str, otp: str) -> tuple[bool, str]:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT") or "587")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM") or smtp_user
+
+    subject = "Your Interview Coach AI verification code"
+    body = (
+        "Your verification code is:\n\n"
+        f"{otp}\n\n"
+        "This code expires in 10 minutes."
+    )
+
+    # Dev fallback: if SMTP isn't configured, log the OTP.
+    if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
+        print(f"[DEV] Email OTP for {email}: {otp}")
+        return True, "OTP generated (dev mode). Check the server console for the code."
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = smtp_from
+    msg["To"] = email
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        return True, "OTP sent to your email."
+    except Exception as exc:
+        print(f"Failed to send OTP email: {exc}")
+        return False, "Unable to send OTP email. Please try again later."
+
+
+def _firebase_upsert_user(email: str, full_name: str) -> str | None:
+    """Create (or update) a Firebase Auth user if Firebase is configured."""
+
+    if not _firebase_available or not firebase_auth or not _firebase_app:
+        return None
+
+    email = (email or "").strip()
+    full_name = (full_name or "").strip()
+    if not email:
+        return None
+
+    try:
+        user = firebase_auth.get_user_by_email(email)
+        firebase_auth.update_user(user.uid, display_name=full_name or user.display_name)
+        return user.uid
+    except Exception:
+        try:
+            user = firebase_auth.create_user(
+                email=email,
+                display_name=full_name or None,
+                email_verified=True,
+            )
+            return user.uid
+        except Exception:
+            return None
 
 
 def get_user_reports_path(username):
@@ -677,14 +843,15 @@ def generate_audio_for_video(script, lang="en"):
         raise ValueError("Script is empty")
 
     # Primary path: gTTS (network-based) for natural voice output.
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
-            audio_file = temp.name
-        tts = gTTS(text=cleaned_script, lang=lang, slow=False)
-        tts.save(audio_file)
-        return audio_file
-    except Exception:
-        pass
+    if gTTS is not None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
+                audio_file = temp.name
+            tts = gTTS(text=cleaned_script, lang=lang, slow=False)
+            tts.save(audio_file)
+            return audio_file
+        except Exception:
+            pass
 
     # Fallback path: pyttsx3 (offline system TTS) when gTTS is unavailable.
     try:
@@ -761,6 +928,21 @@ def create_placeholder_image(prompt, size=(1280, 720)):
 
 
 def create_video_with_images_and_audio(images, audio_file, script, output_video):
+    if mp is None:
+        raise RuntimeError("MoviePy is not installed")
+
+    def _with_duration(clip, seconds: float):
+        if hasattr(clip, "with_duration"):
+            return clip.with_duration(seconds)
+        return clip.set_duration(seconds)
+
+    def _with_audio(clip, audio):
+        if audio is None:
+            return clip
+        if hasattr(clip, "with_audio"):
+            return clip.with_audio(audio)
+        return clip.set_audio(audio)
+
     audio_clip = None
     lines = [line for line in script.split("\n") if ":" in line and line.split(":", 1)[1].strip()]
 
@@ -781,11 +963,11 @@ def create_video_with_images_and_audio(images, audio_file, script, output_video)
         speaker, _ = line.split(":", 1)
         background = images[0] if "Interviewer" in speaker else images[1]
         img_array = np.array(background.convert("RGB"))
-        clip = mp.ImageClip(img_array).set_duration(duration_per_clip)
+        clip = _with_duration(mp.ImageClip(img_array), duration_per_clip)
         clips.append(clip)
 
     video = mp.concatenate_videoclips(clips, method="compose")
-    final_clip = video.set_audio(audio_clip) if audio_clip else video
+    final_clip = _with_audio(video, audio_clip)
     final_clip.write_videofile(
         output_video,
         codec="libx264",
@@ -804,9 +986,403 @@ def login_required():
     return username, None
 
 
+_PROFILE_FIELDS = [
+    "full_name",
+    "email",
+    "phone",
+    "university",
+    "college_year",
+    "degree",
+    "major",
+    "linkedin",
+    "about",
+]
+
+
+def _get_user_profile(username: str) -> dict:
+    users = _load_users()
+    record = users.get(username)
+    if isinstance(record, dict):
+        profile = record.get("profile")
+        if isinstance(profile, dict):
+            return profile
+    return {}
+
+
+def _upsert_user_profile(username: str, updates: dict) -> dict:
+    """Update only profile fields for a user without re-validating full signup/profile."""
+
+    if not isinstance(updates, dict):
+        return _get_user_profile(username)
+
+    users = _load_users()
+    record = users.get(username)
+
+    # Backward compatible: older DB stored just the password hash as a string.
+    if isinstance(record, str):
+        record = {
+            "password_hash": record,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "email_verified": True,
+            "profile": {},
+        }
+    if not isinstance(record, dict):
+        record = {"profile": {}}
+
+    profile = record.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
+
+    profile.update(updates)
+    record["profile"] = profile
+    users[username] = record
+    _save_users(users)
+    return profile
+
+
+def _clamp01(value: float) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        v = 0.0
+    return max(0.0, min(1.0, v))
+
+
+def _safe_mean(values) -> float:
+    nums = [float(v) for v in values if isinstance(v, (int, float))]
+    return (sum(nums) / len(nums)) if nums else 0.0
+
+
+def _get_ats_history(profile: dict) -> list[dict]:
+    hist = profile.get("ats_history") if isinstance(profile, dict) else None
+    if isinstance(hist, list):
+        # Filter to dict records only.
+        return [h for h in hist if isinstance(h, dict)]
+    return []
+
+
+def _record_ats_score(username: str, result: dict) -> None:
+    try:
+        score100 = int(result.get("score"))
+    except Exception:
+        score100 = 0
+    score01 = _clamp01(score100 / 100.0)
+    profile = _get_user_profile(username)
+    hist = _get_ats_history(profile)
+    hist.append(
+        {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "score": score01,
+        }
+    )
+    # Keep latest 25 runs.
+    hist = hist[-25:]
+    _upsert_user_profile(username, {"ats_history": hist, "last_ats_score": score01})
+
+
+_PERSONALITIES = {"strict", "friendly", "faang"}
+_TRAINING_MODES = {"normal", "fix_weakness"}
+_SKILLS = {"dsa", "system_design", "communication"}
+
+
+def _get_coach_settings(profile: dict) -> dict:
+    profile = profile if isinstance(profile, dict) else {}
+    personality = str(profile.get("coach_personality") or "friendly").strip().lower()
+    if personality not in _PERSONALITIES:
+        personality = "friendly"
+    adaptive_personality = bool(profile.get("adaptive_personality"))
+
+    training_mode = str(profile.get("training_mode") or "normal").strip().lower()
+    if training_mode not in _TRAINING_MODES:
+        training_mode = "normal"
+
+    target_skill = str(profile.get("target_skill") or "auto").strip().lower()
+    if target_skill != "auto" and target_skill not in _SKILLS:
+        target_skill = "auto"
+
+    return {
+        "coach_personality": personality,
+        "adaptive_personality": adaptive_personality,
+        "training_mode": training_mode,
+        "target_skill": target_skill,
+    }
+
+
+def _token_count(text: str) -> int:
+    try:
+        return len(nltk.word_tokenize(text or ""))
+    except Exception:
+        return len(re.findall(r"[A-Za-z']+", text or ""))
+
+
+def _dimension_scores_from_report(report: dict) -> dict:
+    """Return normalized (0..1) scores for confidence, clarity, technical_depth."""
+    analysis = report.get("analysis") if isinstance(report, dict) else None
+    analysis = analysis if isinstance(analysis, dict) else {}
+
+    conf_raw = (((analysis.get("confidence") or {}) if isinstance(analysis.get("confidence"), dict) else {}).get(
+        "confidence_score"
+    ))
+    try:
+        confidence = _clamp01(float(conf_raw) / 10.0)
+    except Exception:
+        confidence = 0.0
+
+    filler = 0
+    try:
+        filler = int(
+            (((analysis.get("word_choice") or {}) if isinstance(analysis.get("word_choice"), dict) else {}).get(
+                "filler_word_count"
+            ))
+            or 0
+        )
+    except Exception:
+        filler = 0
+
+    answer_text = (report.get("answer") or "") if isinstance(report, dict) else ""
+    tokens = max(_token_count(answer_text), 1)
+    try:
+        sentences = len(nltk.sent_tokenize(answer_text)) if answer_text else 0
+    except Exception:
+        sentences = len(re.findall(r"[.!?]+", answer_text or "")) + (1 if (answer_text or "").strip() else 0)
+    sentences = max(sentences, 1)
+    avg_sentence_len = tokens / sentences
+
+    # Clarity: reward moderate sentence length and low filler usage.
+    filler_penalty = _clamp01(filler / 8.0) * 0.6
+    length_bonus = 0.0
+    if 10 <= avg_sentence_len <= 22:
+        length_bonus = 0.25
+    elif avg_sentence_len < 7:
+        length_bonus = 0.05
+    else:
+        length_bonus = 0.12
+    clarity = _clamp01((0.75 - filler_penalty) + length_bonus)
+
+    pro_words = 0
+    try:
+        pro_words = int(
+            (((analysis.get("word_choice") or {}) if isinstance(analysis.get("word_choice"), dict) else {}).get(
+                "professional_word_count"
+            ))
+            or 0
+        )
+    except Exception:
+        pro_words = 0
+    metrics = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", answer_text or ""))
+    technical_depth = _clamp01((pro_words / 6.0) * 0.7 + _clamp01(metrics / 6.0) * 0.3)
+
+    return {
+        "confidence": confidence,
+        "clarity": clarity,
+        "technical_depth": technical_depth,
+    }
+
+
+def _infer_skill_from_question(question: str) -> str:
+    q = (question or "").strip().lower()
+    if any(k in q for k in ("data structure", "algorithm", "complexity", "leetcode", "array", "tree", "graph")):
+        return "dsa"
+    if any(k in q for k in ("system design", "design", "architecture", "scal", "distributed")):
+        return "system_design"
+    # Default bucket for most behavioral/general questions.
+    return "communication"
+
+
+def _compute_skill_breakdown(reports: list[dict]) -> dict:
+    by_skill = {"dsa": [], "system_design": [], "communication": []}
+    for r in reports:
+        if not isinstance(r, dict):
+            continue
+        skill = str(r.get("task_skill") or "").strip().lower()
+        if skill not in _SKILLS:
+            skill = _infer_skill_from_question(r.get("question") or "")
+        dims = _dimension_scores_from_report(r)
+        # Communication leans more on clarity+confidence.
+        if skill == "communication":
+            score = 0.6 * dims["clarity"] + 0.4 * dims["confidence"]
+        else:
+            score = 0.55 * dims["technical_depth"] + 0.45 * dims["clarity"]
+        by_skill[skill].append(_clamp01(score))
+
+    scores = {k: _safe_mean(v) for k, v in by_skill.items()}
+    weakest = min(scores, key=scores.get) if scores else "communication"
+
+    def level(value: float) -> str:
+        if value < 0.5:
+            return "weak"
+        if value < 0.75:
+            return "medium"
+        return "strong"
+
+    return {
+        "scores": scores,
+        "levels": {k: level(v) for k, v in scores.items()},
+        "weakest": weakest,
+    }
+
+
+def _answer_score_from_report(report: dict) -> float:
+    if not isinstance(report, dict):
+        return 0.0
+
+    grade = report.get("grade")
+    if isinstance(grade, (int, float)):
+        return _clamp01(float(grade))
+
+    analysis = report.get("analysis") if isinstance(report.get("analysis"), dict) else {}
+    tone = 0.0
+    try:
+        tone = float(((analysis.get("tone") or {}) if isinstance(analysis.get("tone"), dict) else {}).get("score") or 0.0)
+    except Exception:
+        tone = 0.0
+    tone01 = _clamp01(tone * 0.5 + 0.5)
+    dims = _dimension_scores_from_report(report)
+    return _clamp01(0.45 * tone01 + 0.35 * dims["clarity"] + 0.2 * dims["technical_depth"])
+
+
+def _compute_readiness(reports: list[dict], profile: dict) -> dict:
+    hist = _get_ats_history(profile)
+    resume_start = None
+    resume_end = None
+    if hist:
+        resume_start = _clamp01(float(hist[0].get("score") or 0.0))
+        resume_end = _clamp01(float(hist[-1].get("score") or 0.0))
+    else:
+        last = profile.get("last_ats_score") if isinstance(profile, dict) else None
+        if isinstance(last, (int, float)):
+            resume_start = _clamp01(float(last))
+            resume_end = _clamp01(float(last))
+
+    if reports:
+        start_report = reports[0]
+        end_report = reports[-1]
+        answer_start = _answer_score_from_report(start_report)
+        answer_end = _answer_score_from_report(end_report)
+        dims_start = _dimension_scores_from_report(start_report)
+        dims_end = _dimension_scores_from_report(end_report)
+        conf_start = dims_start["confidence"]
+        conf_end = dims_end["confidence"]
+    else:
+        answer_start = None
+        answer_end = None
+        conf_start = None
+        conf_end = None
+
+    def mean_available(values):
+        vals = [v for v in values if isinstance(v, (int, float))]
+        return _clamp01(sum(vals) / len(vals)) if vals else 0.0
+
+    readiness_start = mean_available([resume_start, answer_start, conf_start])
+    readiness_end = mean_available([resume_end, answer_end, conf_end])
+
+    return {
+        "resume": {"start": resume_start if resume_start is not None else 0.0, "end": resume_end if resume_end is not None else 0.0},
+        "answer": {"start": answer_start if answer_start is not None else 0.0, "end": answer_end if answer_end is not None else 0.0},
+        "confidence": {"start": conf_start if conf_start is not None else 0.0, "end": conf_end if conf_end is not None else 0.0},
+        "readiness": {"start": readiness_start, "end": readiness_end},
+    }
+
+
+def _compute_improvement_scorecard(reports: list[dict]) -> dict:
+    if not reports:
+        blank = {"confidence": 0.0, "clarity": 0.0, "technical_depth": 0.0}
+        return {"before": blank, "after": blank}
+
+    before_slice = reports[:3]
+    after_slice = reports[-3:]
+
+    def avg_dims(slice_reports):
+        dims = [_dimension_scores_from_report(r) for r in slice_reports if isinstance(r, dict)]
+        return {
+            "confidence": _safe_mean([d["confidence"] for d in dims]),
+            "clarity": _safe_mean([d["clarity"] for d in dims]),
+            "technical_depth": _safe_mean([d["technical_depth"] for d in dims]),
+        }
+
+    return {"before": avg_dims(before_slice), "after": avg_dims(after_slice)}
+
+
+def _compute_feedback_effectiveness(reports: list[dict]) -> dict:
+    """Average grade improvement attributed to each coach action within RL episodes.
+
+    Falls back to illustrative defaults when we don't have enough RL data.
+    """
+
+    actions = {"hint": [], "example": [], "follow_up": []}
+    # Group by episode id then compute per-attempt improvements.
+    by_episode = {}
+    for r in reports:
+        if not isinstance(r, dict):
+            continue
+        ep = (r.get("rl_episode_id") or "").strip()
+        if not ep:
+            continue
+        by_episode.setdefault(ep, []).append(r)
+
+    for ep_reports in by_episode.values():
+        # Preserve original order as stored.
+        for idx in range(1, len(ep_reports)):
+            prev = ep_reports[idx - 1]
+            cur = ep_reports[idx]
+            prev_grade = prev.get("grade")
+            cur_grade = cur.get("grade")
+            if not isinstance(prev_grade, (int, float)) or not isinstance(cur_grade, (int, float)):
+                continue
+            improvement = float(cur_grade) - float(prev_grade)
+            coach_action = str(cur.get("coach_action") or "").strip().lower()
+            if coach_action == "give_hint":
+                actions["hint"].append(improvement)
+            elif coach_action == "give_example":
+                actions["example"].append(improvement)
+            elif coach_action == "ask_follow_up":
+                actions["follow_up"].append(improvement)
+
+    effectiveness = {
+        "hint": _safe_mean(actions["hint"]),
+        "example": _safe_mean(actions["example"]),
+        "follow_up": _safe_mean(actions["follow_up"]),
+    }
+
+    # If no RL data, provide the illustrative sample numbers from the spec screenshots.
+    if not any(actions.values()):
+        effectiveness = {"hint": 0.10, "example": 0.30, "follow_up": 0.20}
+
+    return effectiveness
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    firebase_web_config = {
+        "apiKey": os.getenv("FIREBASE_WEB_API_KEY") or "",
+        "authDomain": os.getenv("FIREBASE_WEB_AUTH_DOMAIN") or "",
+        "projectId": os.getenv("FIREBASE_WEB_PROJECT_ID") or "",
+        "appId": os.getenv("FIREBASE_WEB_APP_ID") or "",
+        "storageBucket": os.getenv("FIREBASE_WEB_STORAGE_BUCKET") or "",
+        "messagingSenderId": os.getenv("FIREBASE_WEB_MESSAGING_SENDER_ID") or "",
+    }
+
+    # Only expose config if the essentials exist.
+    if not (firebase_web_config["apiKey"] and firebase_web_config["authDomain"] and firebase_web_config["projectId"]):
+        firebase_web_config = None
+
+    return render_template(
+        "index.html",
+        firebase_enabled=bool(_firebase_available),
+        firebase_web_config=firebase_web_config,
+    )
+
+
+def _find_username_by_email(email: str) -> str | None:
+    email_l = (email or "").strip().lower()
+    if not email_l:
+        return None
+    users = _load_users()
+    for username, record in users.items():
+        profile = (record or {}).get("profile") or {}
+        if (profile.get("email") or "").strip().lower() == email_l:
+            return username
+    return None
 
 
 @app.get("/api/meta")
@@ -825,7 +1401,109 @@ def api_me():
     username = session.get("username")
     if not username:
         return jsonify({"logged_in": False})
-    return jsonify({"logged_in": True, "username": username})
+    return jsonify({"logged_in": True, "username": username, "profile": _get_user_profile(username)})
+
+
+@app.post("/api/profile")
+def api_update_profile():
+    username, err = login_required()
+    if err:
+        return err
+
+    data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request"}), 400
+
+    current_profile = _get_user_profile(username)
+
+    def pick(key: str) -> str:
+        if key in data:
+            value = data.get(key)
+        else:
+            value = current_profile.get(key)
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    full_name = pick("full_name")
+    email = pick("email")
+    phone = _normalize_phone(pick("phone"))
+    university = pick("university")
+    college_year_raw = pick("college_year")
+    degree = pick("degree")
+    major = pick("major")
+    linkedin = pick("linkedin")
+    about = pick("about")
+
+    # Match signup validation rules for required profile fields.
+    if not full_name or not email or not phone or not university or not college_year_raw or not degree or not about:
+        return jsonify({"error": "Please fill in all profile fields"}), 400
+
+    if not _is_valid_email(email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+
+    if len(phone) < 8:
+        return jsonify({"error": "Please enter a valid phone number"}), 400
+
+    if not college_year_raw.isdigit() or not (1 <= int(college_year_raw) <= 8):
+        return jsonify({"error": "Current year of college must be a number (1-8)"}), 400
+
+    updated_profile = {
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "university": university,
+        "college_year": int(college_year_raw),
+        "degree": degree,
+        "major": major,
+        "linkedin": linkedin,
+        "about": about,
+    }
+
+    users = _load_users()
+    record = users.get(username)
+
+    # Backward compatible: older DB stored just the password hash as a string.
+    if isinstance(record, str):
+        record = {
+            "password_hash": record,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "email_verified": True,
+            "profile": {},
+        }
+    if not isinstance(record, dict):
+        record = {"profile": {}}
+
+    profile = record.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
+
+    profile.update(updated_profile)
+    record["profile"] = profile
+    users[username] = record
+    _save_users(users)
+
+    return jsonify({"ok": True, "profile": profile})
+
+
+@app.post("/api/auth/send-email-otp")
+def api_send_email_otp():
+    data = request.get_json(force=True)
+    email = (data.get("email") or "").strip()
+    if not _is_valid_email(email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+
+    otp = _generate_otp()
+    _email_otp_store[email.lower()] = {
+        "otp_hash": _otp_hash(email, otp),
+        "expires_at": time.time() + _OTP_TTL_SECONDS,
+        "created_at": time.time(),
+    }
+
+    ok, msg = _send_email_otp(email, otp)
+    if not ok:
+        return jsonify({"error": msg}), 500
+    return jsonify({"ok": True, "message": msg})
 
 
 @app.post("/api/signup")
@@ -835,8 +1513,44 @@ def api_signup():
     password = data.get("password") or ""
     confirm_password = data.get("confirm_password") or ""
 
+    full_name = (data.get("full_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    phone = _normalize_phone(data.get("phone") or "")
+    university = (data.get("university") or "").strip()
+    college_year = (data.get("college_year") or "").strip()
+    degree = (data.get("degree") or "").strip()
+    major = (data.get("major") or "").strip()
+    linkedin = (data.get("linkedin") or "").strip()
+    about = (data.get("about") or "").strip()
+    otp = (data.get("otp") or "").strip()
+
     if not username or not password or not confirm_password:
-        return jsonify({"error": "Please fill in all fields"}), 400
+        return jsonify({"error": "Please fill in username and password fields"}), 400
+
+    # Profile fields (requested full signup data).
+    if not full_name or not email or not phone or not university or not college_year or not degree or not about:
+        return jsonify({"error": "Please fill in all profile fields"}), 400
+
+    if not _is_valid_email(email):
+        return jsonify({"error": "Please enter a valid email address"}), 400
+
+    if len(phone) < 8:
+        return jsonify({"error": "Please enter a valid phone number"}), 400
+
+    if not college_year.isdigit() or not (1 <= int(college_year) <= 8):
+        return jsonify({"error": "Current year of college must be a number (1-8)"}), 400
+
+    # OTP verification.
+    if not otp:
+        return jsonify({"error": "Please enter the email OTP"}), 400
+
+    otp_record = _email_otp_store.get(email.lower())
+    if not otp_record:
+        return jsonify({"error": "OTP not found. Please click Send OTP."}), 400
+    if float(otp_record.get("expires_at") or 0) < time.time():
+        return jsonify({"error": "OTP expired. Please request a new OTP."}), 400
+    if (otp_record.get("otp_hash") or "") != _otp_hash(email, otp):
+        return jsonify({"error": "Invalid OTP"}), 400
 
     valid_username, username_msg = validate_username(username)
     if not valid_username:
@@ -852,7 +1566,28 @@ def api_signup():
     if user_exists(username):
         return jsonify({"error": "Username already exists"}), 400
 
-    add_user(username, password)
+    profile = {
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "university": university,
+        "college_year": int(college_year),
+        "degree": degree,
+        "major": major,
+        "linkedin": linkedin,
+        "about": about,
+    }
+
+    firebase_uid = _firebase_upsert_user(email=email, full_name=full_name)
+    if firebase_uid:
+        profile["firebase_uid"] = firebase_uid
+    add_user(username, password, profile=profile, email_verified=True)
+
+    # OTP was used successfully; remove it.
+    try:
+        del _email_otp_store[email.lower()]
+    except Exception:
+        pass
     return jsonify({"ok": True, "message": "Account created successfully"})
 
 
@@ -867,6 +1602,53 @@ def api_login():
 
     if not authenticate_user(username, password):
         return jsonify({"error": "Invalid username or password"}), 401
+
+    session["username"] = username
+    return jsonify({"ok": True, "username": username})
+
+
+@app.post("/api/auth/firebase/session")
+def api_firebase_session_login():
+    """Create a Flask session from a Firebase ID token (email-link sign-in)."""
+
+    if not _firebase_available or not firebase_auth:
+        return jsonify({"error": "Firebase is not configured on the server"}), 400
+
+    data = request.get_json(force=True)
+    id_token = (data.get("id_token") or "").strip()
+    if not id_token:
+        return jsonify({"error": "Missing id_token"}), 400
+
+    try:
+        decoded = firebase_auth.verify_id_token(id_token)
+    except Exception:
+        return jsonify({"error": "Invalid Firebase token"}), 401
+
+    email = (decoded.get("email") or "").strip()
+    email_verified = bool(decoded.get("email_verified"))
+    firebase_uid = (decoded.get("uid") or "").strip()
+    if not email:
+        return jsonify({"error": "Firebase token missing email"}), 400
+    if not email_verified:
+        return jsonify({"error": "Email is not verified"}), 401
+
+    username = _find_username_by_email(email)
+    if not username:
+        return jsonify({"error": "No local account found for this email. Please Sign Up first."}), 404
+
+    # Sync firebase uid into the local record if needed.
+    try:
+        users = _load_users()
+        record = users.get(username) or {}
+        profile = record.get("profile") or {}
+        if firebase_uid and profile.get("firebase_uid") != firebase_uid:
+            profile["firebase_uid"] = firebase_uid
+        record["profile"] = profile
+        record["email_verified"] = True
+        users[username] = record
+        _save_users(users)
+    except Exception:
+        pass
 
     session["username"] = username
     return jsonify({"ok": True, "username": username})
@@ -922,6 +1704,323 @@ def _build_analysis_payload(question, answer, posture=None):
     }
 
 
+def _style_feedback(personality: str, analysis: dict, base_feedback: str) -> str:
+    personality = (personality or "").strip().lower()
+    if personality not in _PERSONALITIES:
+        personality = "friendly"
+
+    dims = _dimension_scores_from_report({"analysis": analysis, "answer": analysis.get("text") if isinstance(analysis, dict) else ""})
+    confidence = dims.get("confidence", 0.0)
+    clarity = dims.get("clarity", 0.0)
+    technical = dims.get("technical_depth", 0.0)
+
+    if personality == "strict":
+        return (
+            "STRICT INTERVIEWER\n"
+            f"Confidence: {confidence:.2f} | Clarity: {clarity:.2f} | Technical Depth: {technical:.2f}\n"
+            "Fix these items in your next attempt:\n"
+            f"{base_feedback}"
+        )
+
+    if personality == "faang":
+        # Keep it concise and technical.
+        improvement_areas = []
+        try:
+            filler = int(((analysis.get("word_choice") or {}).get("filler_word_count") or 0))
+        except Exception:
+            filler = 0
+        if filler >= 3:
+            improvement_areas.append("reduce filler words")
+        if clarity < 0.6:
+            improvement_areas.append("structure answer (STAR / clear narrative)")
+        if technical < 0.55:
+            improvement_areas.append("add concrete metrics + technical detail")
+        if confidence < 0.6:
+            improvement_areas.append("speak more assertively")
+
+        top_fixes = "; ".join(improvement_areas[:3]) if improvement_areas else "keep the same structure; add one concrete example"
+        return (
+            "FAANG INTERVIEWER NOTES\n"
+            f"Signals: confidence={confidence:.2f}, clarity={clarity:.2f}, depth={technical:.2f}\n"
+            f"Next iteration: {top_fixes}.\n\n"
+            f"{base_feedback}"
+        )
+
+    # friendly
+    return (
+        "FRIENDLY MENTOR\n"
+        f"Confidence: {confidence:.2f} | Clarity: {clarity:.2f} | Technical Depth: {technical:.2f}\n"
+        f"{base_feedback}\n\n"
+        "You’re improving — take one feedback point and retry."
+    )
+
+
+def _get_personality_stats(profile: dict) -> dict:
+    stats = profile.get("personality_stats") if isinstance(profile, dict) else None
+    if not isinstance(stats, dict):
+        return {p: {"count": 0, "total_improvement": 0.0} for p in _PERSONALITIES}
+
+    normalized = {}
+    for p in _PERSONALITIES:
+        raw = stats.get(p)
+        if isinstance(raw, dict):
+            try:
+                count = int(raw.get("count") or 0)
+            except Exception:
+                count = 0
+            try:
+                total = float(raw.get("total_improvement") or 0.0)
+            except Exception:
+                total = 0.0
+        else:
+            count = 0
+            total = 0.0
+        normalized[p] = {"count": max(0, count), "total_improvement": float(total)}
+    return normalized
+
+
+def _recommended_personality(profile: dict) -> str:
+    stats = _get_personality_stats(profile)
+    best = "friendly"
+    best_avg = float("-inf")
+    for p, rec in stats.items():
+        count = int(rec.get("count") or 0)
+        total = float(rec.get("total_improvement") or 0.0)
+        avg = (total / count) if count else 0.0
+        if avg > best_avg:
+            best_avg = avg
+            best = p
+    return best
+
+
+def _pick_personality_for_attempt(profile: dict) -> str:
+    settings = _get_coach_settings(profile)
+    if not settings.get("adaptive_personality"):
+        return settings.get("coach_personality") or "friendly"
+
+    # Epsilon-greedy over personalities.
+    epsilon = 0.2
+    if secrets.randbelow(1000) < int(epsilon * 1000):
+        return list(_PERSONALITIES)[secrets.randbelow(len(_PERSONALITIES))]
+    return _recommended_personality(profile)
+
+
+def _update_personality_stats(username: str, personality: str, improvement: float) -> None:
+    personality = (personality or "").strip().lower()
+    if personality not in _PERSONALITIES:
+        return
+    profile = _get_user_profile(username)
+    stats = _get_personality_stats(profile)
+    rec = stats.get(personality) or {"count": 0, "total_improvement": 0.0}
+    rec["count"] = int(rec.get("count") or 0) + 1
+    rec["total_improvement"] = float(rec.get("total_improvement") or 0.0) + float(improvement or 0.0)
+    stats[personality] = rec
+    _upsert_user_profile(username, {"personality_stats": stats})
+
+
+def _normalize_thread_turns(raw_turns):
+    if not isinstance(raw_turns, list):
+        return []
+
+    normalized = []
+    for item in raw_turns:
+        if not isinstance(item, dict):
+            continue
+        q = (item.get("question") or "").strip()
+        a = (item.get("answer") or item.get("transcription") or "").strip()
+        if not q or not a:
+            continue
+        normalized.append({"question": q, "answer": a})
+
+    # Keep prompts compact.
+    return normalized[-8:]
+
+
+def _sanitize_followup_question(text: str) -> str:
+    question = (text or "").strip().replace("\n", " ")
+    question = re.sub(r"\s+", " ", question).strip()
+    question = question.strip("\"'`“””‘’ ")
+    if not question:
+        return "Can you walk me through a specific example and the outcome?"
+    if not question.endswith("?"):
+        question = f"{question}?"
+    # Keep it short and interview-like.
+    if len(question) > 240:
+        question = question[:237].rstrip() + "...?"
+    return question
+
+
+def _heuristic_followup_question(root_question: str, turns) -> str:
+    root = (root_question or "").lower()
+    last_answer = (turns[-1]["answer"] if turns else "")
+    asked_questions = [t.get("question", "").strip() for t in turns if isinstance(t, dict)]
+    asked_set = {q for q in asked_questions if q}
+
+    def pick(candidates):
+        for q in candidates:
+            if q not in asked_set:
+                return q
+        return None
+
+    if "tell me about yourself" in root:
+        candidate = pick(
+            [
+                "Which part of your background is most relevant to this role, and why?",
+                "Tell me about a recent project you're most proud of. What was your role and impact?",
+                "What kind of work environment helps you do your best work, and why?",
+                "What would you say is your biggest strength, and one area you're actively improving?",
+                "Why are you interested in this role, specifically?",
+            ]
+        )
+        if candidate:
+            return candidate
+
+    if "greatest strength" in root or "your greatest strength" in root or root.strip().endswith("strength?"):
+        candidate = pick(
+            [
+                "Can you share a specific example where that strength made a measurable impact?",
+                "How do you apply that strength when you're under pressure or facing tight deadlines?",
+                "How would your teammates describe that strength, and why?",
+            ]
+        )
+        if candidate:
+            return candidate
+
+    if "greatest weakness" in root or "your greatest weakness" in root or root.strip().endswith("weakness?"):
+        candidate = pick(
+            [
+                "What steps are you taking to improve that weakness, and what progress have you seen so far?",
+                "Can you share an example where that weakness showed up, and how you handled it?",
+                "What systems or habits do you use today to prevent that weakness from impacting results?",
+            ]
+        )
+        if candidate:
+            return candidate
+
+    # Keyword-based probe from the candidate's last answer.
+    tokens = re.findall(r"[A-Za-z][A-Za-z']{2,}", (last_answer or "").lower())
+    stop = set()
+    try:
+        stop = set(stopwords.words("english"))
+    except Exception:
+        stop = set()
+    common = {
+        "also",
+        "really",
+        "very",
+        "just",
+        "like",
+        "think",
+        "know",
+        "because",
+        "about",
+        "into",
+        "from",
+        "with",
+        "that",
+        "this",
+        "there",
+        "their",
+        "have",
+        "been",
+        "were",
+        "when",
+        "what",
+        "where",
+        "which",
+        "your",
+    }
+    keywords = [t for t in tokens if t not in stop and t not in common]
+    topic = keywords[0] if keywords else "that"
+
+    # Use a rotating set of probes and avoid repeats.
+    probes = [
+        f"You mentioned {topic}. Can you describe a specific situation, what you did, and the result?",
+        "What was the biggest challenge in that situation, and how did you overcome it?",
+        "How did you measure success, and what did you learn from the outcome?",
+        "If you had to do it again, what would you do differently and why?",
+    ]
+    candidate = pick(probes)
+    if candidate:
+        return candidate
+
+    return "Can you walk me through a specific example and the outcome?"
+
+
+def _openai_followup_question(root_question: str, turns) -> str | None:
+    if not api_key:
+        return None
+
+    model = (
+        os.getenv("OPENAI_MODEL")
+        or os.getenv("MODEL_NAME")
+        or os.getenv("OPENAI_CHAT_MODEL")
+        or "gpt-4o-mini"
+    )
+    dialogue = []
+    for t in turns:
+        dialogue.append(f"Q: {t['question']}\nA: {t['answer']}")
+    conversation = "\n\n".join(dialogue) if dialogue else ""
+    asked_questions = [t.get("question", "").strip() for t in turns if isinstance(t, dict) and t.get("question")]
+    asked_block = "\n".join(f"- {q}" for q in asked_questions[-8:])
+
+    system = (
+        "You are an HR interviewer running a realistic mock interview. "
+        "Given the initial question and the candidate's answers so far, ask exactly ONE concise follow-up question. "
+        "Do not repeat any previously asked question. "
+        "Return only the question text (no bullets, no preface, no feedback)."
+    )
+    user = (
+        f"Initial question: {root_question}\n\n"
+        f"Conversation so far:\n{conversation}\n\n"
+        f"Previously asked questions:\n{asked_block}\n\n"
+        "Ask the next follow-up question."
+    )
+
+    try:
+        if _OPENAI_NEW and client is not None:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.7,
+                max_tokens=80,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            return content
+
+        if not _OPENAI_NEW:
+            resp = openai.ChatCompletion.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.7,
+                max_tokens=80,
+            )
+            content = (resp["choices"][0]["message"]["content"] or "").strip()
+            return content
+    except Exception:
+        return None
+
+    return None
+
+
+def _generate_followup_question(root_question: str, raw_turns) -> str:
+    turns = _normalize_thread_turns(raw_turns)
+    root = (root_question or "").strip() or (turns[0]["question"] if turns else "")
+
+    # Prefer LLM if configured, otherwise fall back.
+    candidate = _openai_followup_question(root, turns)
+    if not candidate:
+        candidate = _heuristic_followup_question(root, turns)
+
+    return _sanitize_followup_question(candidate)
+
+
 @app.post("/api/practice/text")
 def api_practice_text():
     username, err = login_required()
@@ -934,10 +2033,27 @@ def api_practice_text():
     if not question or not answer:
         return jsonify({"error": "Question and answer are required"}), 400
 
+    profile = _get_user_profile(username)
+    settings = _get_coach_settings(profile)
+    personality_used = settings.get("coach_personality") or "friendly"
+
     payload = _build_analysis_payload(question, answer)
+    payload["feedback"] = _style_feedback(personality_used, payload.get("analysis") or {}, payload.get("feedback") or "")
+    payload["coach_personality_used"] = personality_used
+    root_question = (data.get("root_question") or question).strip()
+    thread_turns = data.get("thread_turns")
+    if not thread_turns:
+        thread_turns = [{"question": question, "answer": answer}]
+    payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
     save_interview_report(
         username,
-        {"question": question, "answer": answer, "analysis": payload["analysis"]},
+        {
+            "question": question,
+            "answer": answer,
+            "analysis": payload["analysis"],
+            "task_skill": _infer_skill_from_question(question),
+            "coach_personality_used": personality_used,
+        },
     )
     return jsonify(payload)
 
@@ -954,10 +2070,27 @@ def api_practice_audio():
     if not question or not transcription:
         return jsonify({"error": "Question and transcription are required"}), 400
 
+    profile = _get_user_profile(username)
+    settings = _get_coach_settings(profile)
+    personality_used = settings.get("coach_personality") or "friendly"
+
     payload = _build_analysis_payload(question, transcription)
+    payload["feedback"] = _style_feedback(personality_used, payload.get("analysis") or {}, payload.get("feedback") or "")
+    payload["coach_personality_used"] = personality_used
+    root_question = (data.get("root_question") or question).strip()
+    thread_turns = data.get("thread_turns")
+    if not thread_turns:
+        thread_turns = [{"question": question, "answer": transcription}]
+    payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
     save_interview_report(
         username,
-        {"question": question, "answer": transcription, "analysis": payload["analysis"]},
+        {
+            "question": question,
+            "answer": transcription,
+            "analysis": payload["analysis"],
+            "task_skill": _infer_skill_from_question(question),
+            "coach_personality_used": personality_used,
+        },
     )
     return jsonify(payload)
 
@@ -1016,13 +2149,26 @@ def api_practice_video():
         "feedback": posture.get("feedback", "No posture analysis available."),
     }
 
+    profile = _get_user_profile(username)
+    settings = _get_coach_settings(profile)
+    personality_used = settings.get("coach_personality") or "friendly"
+
     payload = _build_analysis_payload(question, transcription, posture=posture_data)
+    payload["feedback"] = _style_feedback(personality_used, payload.get("analysis") or {}, payload.get("feedback") or "")
+    payload["coach_personality_used"] = personality_used
+    root_question = (data.get("root_question") or question).strip()
+    thread_turns = data.get("thread_turns")
+    if not thread_turns:
+        thread_turns = [{"question": question, "answer": transcription}]
+    payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
     save_interview_report(
         username,
         {
             "question": question,
             "answer": transcription,
             "analysis": payload["analysis"],
+            "task_skill": _infer_skill_from_question(question),
+            "coach_personality_used": personality_used,
         },
     )
     return jsonify(payload)
@@ -1061,6 +2207,113 @@ def api_progress():
         )
 
     return jsonify({"sessions": len(reports), "timeline": timeline})
+
+
+@app.post("/api/ats/check")
+def api_ats_check():
+    username, err = login_required()
+    if err:
+        return err
+
+    if "resume" not in request.files:
+        return jsonify({"error": "No resume file provided"}), 400
+
+    resume = request.files["resume"]
+    filename = secure_filename(resume.filename or "resume")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return jsonify({"error": "Unsupported file type. Upload PDF, DOCX, or TXT."}), 400
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as temp:
+        path = temp.name
+        resume.save(path)
+
+    try:
+        result = analyze_resume_file(path, filename)
+        try:
+            _record_ats_score(username, result)
+        except Exception:
+            pass
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": f"ATS check failed: {exc}"}), 500
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+
+
+@app.get("/api/coach/summary")
+def api_coach_summary():
+    username, err = login_required()
+    if err:
+        return err
+
+    reports = get_user_reports(username)
+    profile = _get_user_profile(username)
+    settings = _get_coach_settings(profile)
+
+    readiness = _compute_readiness(reports, profile)
+    skills = _compute_skill_breakdown(reports)
+    effectiveness = _compute_feedback_effectiveness(reports)
+    scorecard = _compute_improvement_scorecard(reports)
+
+    stats = _get_personality_stats(profile)
+    recommended = _recommended_personality(profile)
+
+    return jsonify(
+        {
+            "ok": True,
+            "settings": {
+                **settings,
+                "recommended_personality": recommended,
+                "personality_stats": stats,
+            },
+            "readiness": readiness,
+            "skills": skills,
+            "effectiveness": effectiveness,
+            "scorecard": scorecard,
+        }
+    )
+
+
+@app.post("/api/coach/settings")
+def api_coach_settings():
+    username, err = login_required()
+    if err:
+        return err
+
+    data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request"}), 400
+
+    updates = {}
+    if "coach_personality" in data:
+        p = str(data.get("coach_personality") or "").strip().lower()
+        if p not in _PERSONALITIES:
+            return jsonify({"error": "Invalid coach_personality"}), 400
+        updates["coach_personality"] = p
+
+    if "adaptive_personality" in data:
+        updates["adaptive_personality"] = bool(data.get("adaptive_personality"))
+
+    if "training_mode" in data:
+        m = str(data.get("training_mode") or "").strip().lower()
+        if m not in _TRAINING_MODES:
+            return jsonify({"error": "Invalid training_mode"}), 400
+        updates["training_mode"] = m
+
+    if "target_skill" in data:
+        s = str(data.get("target_skill") or "").strip().lower()
+        if s != "auto" and s not in _SKILLS:
+            return jsonify({"error": "Invalid target_skill"}), 400
+        updates["target_skill"] = s
+
+    profile = _upsert_user_profile(username, updates)
+    return jsonify({"ok": True, "settings": _get_coach_settings(profile)})
 
 
 @app.get("/api/reports/pdf")
@@ -1194,10 +2447,19 @@ def api_rl_new_session():
     if not _rl_available or _rl_env is None:
         return jsonify({"error": "RL module is unavailable in this runtime"}), 503
 
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
     difficulty = (data.get("difficulty") or "medium").strip().lower()
     if difficulty not in ["easy", "medium", "hard"]:
         difficulty = "medium"
+
+    profile = _get_user_profile(username)
+    settings = _get_coach_settings(profile)
+    training_mode = str(data.get("training_mode") or settings.get("training_mode") or "normal").strip().lower()
+    if training_mode not in _TRAINING_MODES:
+        training_mode = "normal"
+    target_skill = str(data.get("target_skill") or settings.get("target_skill") or "auto").strip().lower()
+    if target_skill != "auto" and target_skill not in _SKILLS:
+        target_skill = "auto"
 
     session_key = f"{username}_rl_session"
     if session_key in _session_episodes:
@@ -1213,7 +2475,15 @@ def api_rl_new_session():
     if not tasks:
         return jsonify({"error": f"No {difficulty} tasks available"}), 404
 
+    if training_mode == "fix_weakness":
+        if target_skill == "auto":
+            target_skill = _compute_skill_breakdown(get_user_reports(username)).get("weakest") or "communication"
+        filtered = [t for t in tasks if _infer_skill_from_question(t.question) == target_skill]
+        if filtered:
+            tasks = filtered
+
     task = tasks[0]
+    task_skill = _infer_skill_from_question(task.question)
     obs = _rl_env.reset(task)
     _session_episodes[session_key] = {
         "task": task,
@@ -1222,6 +2492,9 @@ def api_rl_new_session():
         "total_reward": 0.0,
         "grades": [],
         "strategies_used": [],
+        "task_skill": task_skill,
+        "training_mode": training_mode,
+        "target_skill": target_skill,
     }
 
     return jsonify(
@@ -1234,6 +2507,9 @@ def api_rl_new_session():
             "target_grade": task.target_grade,
             "max_attempts": task.max_attempts,
             "keywords": task.keywords,
+            "task_skill": task_skill,
+            "training_mode": training_mode,
+            "target_skill": target_skill,
         }
     )
 
@@ -1247,7 +2523,7 @@ def api_rl_practice_text():
     if not _rl_available or _rl_env is None:
         return jsonify({"error": "RL module is unavailable in this runtime"}), 503
 
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
     question = (data.get("question") or "").strip()
     answer = (data.get("answer") or "").strip()
     task_difficulty = (data.get("task_difficulty") or "medium").strip().lower()
@@ -1265,9 +2541,19 @@ def api_rl_practice_text():
         "hard": TaskType.HARD,
     }
 
+    profile = _get_user_profile(username)
+    personality_used = _pick_personality_for_attempt(profile)
+
     payload = _build_analysis_payload(question, answer)
-    grade = payload["analysis"].get("tone", {}).get("score", 0.0) * 0.5 + 0.5
-    grade = min(max(grade, 0.0), 1.0)
+    payload["feedback"] = _style_feedback(personality_used, payload.get("analysis") or {}, payload.get("feedback") or "")
+    payload["coach_personality_used"] = personality_used
+    root_question = (data.get("root_question") or question).strip()
+    thread_turns = data.get("thread_turns")
+    if not thread_turns:
+        thread_turns = [{"question": question, "answer": answer}]
+    payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
+    approx_grade = payload["analysis"].get("tone", {}).get("score", 0.0) * 0.5 + 0.5
+    approx_grade = min(max(approx_grade, 0.0), 1.0)
 
     session_key = f"{username}_rl_session"
     if session_key not in _session_episodes:
@@ -1285,7 +2571,7 @@ def api_rl_practice_text():
 
     session_state = _session_episodes[session_key]
     session_state["attempt"] += 1
-    session_state["grades"].append(grade)
+    prev_grade_for_improvement = session_state["grades"][-1] if session_state["grades"] else 0.0
 
     if use_agent_feedback and _rl_agent:
         current_obs = session_state["observation"]
@@ -1296,6 +2582,13 @@ def api_rl_practice_text():
         session_state["observation"] = result.observation
         session_state["total_reward"] += result.reward.total
         session_state["strategies_used"].append(best_action.value)
+
+        # Prefer the environment's grader score when available.
+        try:
+            grade = float(result.info.get("grade", approx_grade))
+        except Exception:
+            grade = approx_grade
+        grade = min(max(grade, 0.0), 1.0)
 
         try:
             rl_feedback = _rl_env._generate_feedback(
@@ -1320,9 +2613,51 @@ def api_rl_practice_text():
     else:
         rl_strategy = "none"
         rl_feedback = "RL coaching disabled"
+        grade = approx_grade
         reward = 0.0
         episode_done = False
         success = False
+
+    session_state["grades"].append(grade)
+    improvement = float(grade) - float(prev_grade_for_improvement)
+    if session_state["attempt"] > 1:
+        try:
+            _update_personality_stats(username, personality_used, improvement)
+        except Exception:
+            pass
+
+    # Agent brain visualization (based on the pre-step observation).
+    weak_skill = _compute_skill_breakdown(get_user_reports(username)).get("weakest") or "communication"
+    coach_action = "give_hint"
+    reason = "Small nudge to improve the next attempt"
+    example_text = ""
+    try:
+        if current_obs.keyword_recall < 0.4:
+            coach_action = "give_example"
+            reason = "Low keyword recall"
+        elif current_obs.structure_score < 0.55:
+            coach_action = "ask_follow_up"
+            reason = "Low conceptual clarity / structure"
+    except Exception:
+        pass
+
+    try:
+        task = session_state.get("task")
+        if coach_action == "give_example" and task and getattr(task, "examples", None):
+            example_text = str(task.examples[0])
+    except Exception:
+        example_text = ""
+
+    payload["agent_brain"] = {
+        "state": {
+            "score": float(getattr(current_obs, "current_grade", 0.0)) if use_agent_feedback and _rl_agent else float(grade),
+            "weak": weak_skill,
+        },
+        "action": coach_action,
+        "reason": reason,
+    }
+    if example_text:
+        payload["agent_brain"]["example"] = example_text
 
     save_interview_report(
         username,
@@ -1332,8 +2667,16 @@ def api_rl_practice_text():
             "analysis": payload["analysis"],
             "rl_strategy": rl_strategy,
             "grade": grade,
+            "rl_episode_id": result.info.get("episode_id") if use_agent_feedback and _rl_agent else "",
+            "coach_action": coach_action,
+            "task_skill": session_state.get("task_skill") or _infer_skill_from_question(question),
+            "coach_personality_used": personality_used,
         },
     )
+
+    attempts = max(int(session_state.get("attempt") or 0), 1)
+    raw_total_reward = float(session_state.get("total_reward") or 0.0)
+    total_reward_normalized = min(max(raw_total_reward / attempts, 0.0), 1.0)
 
     return jsonify(
         {
@@ -1346,7 +2689,10 @@ def api_rl_practice_text():
             "episode_success": success,
             "session_progress": {
                 "attempt": session_state["attempt"],
-                "total_reward": session_state["total_reward"],
+                # Keep raw cumulative reward for debugging/analytics.
+                "raw_total_reward": raw_total_reward,
+                # Normalized total reward stays within [0, 1] for UI.
+                "total_reward": total_reward_normalized,
                 "avg_grade": sum(session_state["grades"]) / len(session_state["grades"]),
                 "strategies_used": session_state["strategies_used"],
             },
@@ -1371,6 +2717,9 @@ def api_rl_session_status():
 
     session_state = _session_episodes[session_key]
     grades = session_state["grades"]
+    attempts = max(int(session_state.get("attempt") or 0), 1)
+    raw_total_reward = float(session_state.get("total_reward") or 0.0)
+    total_reward_normalized = min(max(raw_total_reward / attempts, 0.0), 1.0)
     return jsonify(
         {
             "has_active_session": True,
@@ -1378,7 +2727,8 @@ def api_rl_session_status():
             "question": session_state["task"].question,
             "attempt": session_state["attempt"],
             "max_attempts": session_state["task"].max_attempts,
-            "total_reward": session_state["total_reward"],
+            "raw_total_reward": raw_total_reward,
+            "total_reward": total_reward_normalized,
             "average_grade": sum(grades) / len(grades) if grades else 0.0,
             "max_grade": max(grades) if grades else 0.0,
             "strategies_used": session_state["strategies_used"],

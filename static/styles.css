@@ -275,6 +275,37 @@ body::after {
   color: #b2a9de;
 }
 
+.otp-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .55rem;
+  align-items: center;
+  margin-top: .2rem;
+}
+
+.otp-row input,
+.otp-row button {
+  margin: 0;
+}
+
+.otp-row button {
+  width: auto;
+  padding: .7rem .9rem;
+  white-space: nowrap;
+}
+
+#firebaseEmailLinkBox {
+  margin-top: .9rem;
+}
+
+#firebaseEmailLinkBox .auth-subtext {
+  margin-top: 0;
+}
+
+#completeEmailLinkBtn {
+  margin-top: .5rem;
+}
+
 #authMessage {
   text-align: center;
   margin-top: .4rem;
@@ -601,6 +632,47 @@ button.ghost {
   color: #efe9ff;
 }
 
+.coach-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .7rem;
+  margin: .85rem 0 1rem;
+}
+
+.coach-panel {
+  background: linear-gradient(165deg, rgba(29, 21, 70, 0.92), rgba(20, 15, 58, 0.88));
+  border: 1px solid #5547a2;
+  border-radius: 16px;
+  padding: .85rem;
+}
+
+.coach-panel h3 {
+  margin: 0 0 .55rem;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.05rem;
+}
+
+.mini-code {
+  background: rgba(18, 13, 50, 0.72);
+  border: 1px solid #4e4496;
+  border-radius: 14px;
+  padding: .65rem .75rem;
+  color: #dfd8ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: .9rem;
+  line-height: 1.45;
+}
+
+.agent-brain {
+  margin-top: .75rem;
+}
+
+.agent-brain h3 {
+  margin: 0 0 .55rem;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.05rem;
+}
+
 .chart-wrap {
   background: rgba(18, 13, 50, 0.72);
   border: 1px solid #4e4496;
@@ -611,6 +683,192 @@ button.ghost {
 
 .chart-wrap canvas {
   max-height: 280px;
+}
+
+.ats-upload {
+  max-width: 620px;
+  margin: 0 auto;
+  display: grid;
+  gap: .55rem;
+}
+
+.ats-upload input[type="file"] {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #4e4496;
+  background: rgba(18, 13, 50, 0.72);
+  padding: .55rem .7rem;
+  color: var(--ink);
+}
+
+.ats-results {
+  max-width: 620px;
+  margin: 1rem auto 0;
+  display: grid;
+  gap: .85rem;
+}
+
+.ats-scorecard {
+  text-align: center;
+  border-radius: 16px;
+  border: 1px solid #4e4496;
+  background: rgba(18, 13, 50, 0.72);
+  padding: 1rem 1rem .85rem;
+}
+
+.ats-scorecard h3 {
+  margin: 0 0 .35rem;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.4rem;
+}
+
+.ats-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .35rem;
+}
+
+.ats-score strong {
+  font-size: 2.2rem;
+  font-family: "Space Grotesk", sans-serif;
+  background: linear-gradient(135deg, var(--accent-2), var(--accent-3));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.ats-score span {
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
+.ats-issues {
+  margin: .2rem 0 0;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
+.ats-groups {
+  display: grid;
+  gap: .65rem;
+}
+
+.ats-group {
+  border-radius: 16px;
+  border: 1px solid #4e4496;
+  background: rgba(18, 13, 50, 0.72);
+  overflow: hidden;
+}
+
+.ats-group-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: .7rem .85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.ats-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ats-group-title {
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: .85rem;
+  font-weight: 800;
+  color: #d9d4ff;
+}
+
+.ats-badge {
+  font-weight: 800;
+  font-size: .8rem;
+  padding: .18rem .55rem;
+  border-radius: 999px;
+  border: 1px solid #675bb9;
+  background: #241c61;
+  color: #f0ebff;
+}
+
+.ats-items {
+  padding: .2rem .85rem .85rem;
+  display: grid;
+  gap: .55rem;
+}
+
+.ats-item {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+
+.ats-item-block {
+  display: grid;
+  gap: .35rem;
+}
+
+.ats-item-help {
+  margin-left: calc(22px + .65rem);
+  padding: .5rem .6rem;
+  border-radius: 12px;
+  border: 1px solid #4e4496;
+  background: rgba(30, 24, 79, 0.5);
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.ats-item-help-line {
+  font-size: .88rem;
+  line-height: 1.25;
+}
+
+.ats-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-weight: 900;
+  flex: 0 0 22px;
+}
+
+.ats-icon.ok {
+  color: var(--accent);
+  border: 1px solid rgba(38, 214, 255, 0.35);
+  background: rgba(38, 214, 255, 0.10);
+}
+
+.ats-icon.issue {
+  color: var(--accent-2);
+  border: 1px solid #aa4f8d;
+  background: rgba(255, 79, 216, 0.10);
+}
+
+.ats-item-label {
+  flex: 1;
+  color: #e8e3ff;
+  font-weight: 700;
+}
+
+.ats-pill {
+  font-size: .78rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: .18rem .6rem;
+  border: 1px solid #675bb9;
+  color: #f0ebff;
+}
+
+.ats-pill.ok {
+  background: #1f2f68;
+  border-color: #627ce0;
+}
+
+.ats-pill.issue {
+  background: #4a1d3f;
+  border-color: #aa4f8d;
 }
 
 .step-item p {
@@ -838,6 +1096,75 @@ button.ghost {
   box-shadow: inset 0 0 0 1px rgba(160, 132, 255, 0.2);
 }
 
+.practice-thread {
+  margin-top: .9rem;
+  padding: .95rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.practice-thread h3 {
+  margin: 0 0 .7rem;
+  font-family: "Space Grotesk", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.practice-thread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .7rem;
+}
+
+.practice-thread-header h3 {
+  margin: 0;
+}
+
+.practice-thread-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: .75rem;
+  margin-bottom: .75rem;
+}
+
+.practice-thread-block {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.practice-thread-block small {
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-size: .75rem;
+}
+
+.practice-thread-answer {
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.practice-prompt {
+  margin-top: .9rem;
+  margin-bottom: .9rem;
+  border-radius: 14px;
+  border: 1px solid var(--accent);
+  padding: .75rem;
+  background: rgba(19, 16, 52, 0.45);
+}
+
+.practice-prompt small {
+  display: block;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-size: .75rem;
+  margin-bottom: .25rem;
+}
+
 .loading-overlay {
   position: fixed;
   inset: 0;
@@ -927,6 +1254,10 @@ button.ghost {
 
   .progress-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coach-panels {
+    grid-template-columns: 1fr;
   }
 
   .date-row {

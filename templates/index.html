@@ -41,6 +41,16 @@
             <button type="button" class="password-toggle" data-toggle-password="loginPassword" aria-label="Toggle password visibility"></button>
           </div>
           <button id="loginBtn">Login</button>
+
+          <div id="firebaseEmailLinkBox" class="hidden">
+            <p class="auth-subtext">Or sign in with an email link.</p>
+            <div class="otp-row">
+              <input id="emailLinkEmail" placeholder="Email address" />
+              <button id="sendEmailLinkBtn" type="button" class="ghost">Send Link</button>
+            </div>
+            <button id="completeEmailLinkBtn" type="button" class="ghost">Complete sign-in</button>
+          </div>
+
           <p class="auth-hint">Need an account? <button id="toSignupLink" type="button" class="inline-link">Sign Up</button></p>
         </div>
       </div>
@@ -49,6 +59,15 @@
         <div class="auth-panel-inner">
           <h2>Sign Up</h2>
           <p class="auth-subtext">Create your account and start practicing smarter.</p>
+          <input id="signupFullName" placeholder="Full name" />
+          <input id="signupEmail" placeholder="Email address" />
+          <input id="signupPhone" placeholder="Phone number" />
+          <input id="signupUniversity" placeholder="University / College" />
+          <input id="signupCollegeYear" placeholder="Current year of college (e.g., 2)" />
+          <input id="signupDegree" placeholder="Degree (e.g., B.Tech, BSc)" />
+          <input id="signupMajor" placeholder="Branch / Major" />
+          <input id="signupLinkedIn" placeholder="LinkedIn / Portfolio URL (optional)" />
+          <textarea id="signupAbout" rows="3" placeholder="About you (goals, interests, etc.)"></textarea>
           <input id="signupUsername" placeholder="Username (min 8 chars)" />
           <div class="password-input-wrapper">
             <input id="signupPassword" type="password" placeholder="Password" />
@@ -58,7 +77,11 @@
             <input id="signupConfirmPassword" type="password" placeholder="Confirm Password" />
             <button type="button" class="password-toggle" data-toggle-password="signupConfirmPassword" aria-label="Toggle password visibility"></button>
           </div>
-          <button id="signupBtn">Sign Up</button>
+          <div class="otp-row">
+            <input id="signupOtp" placeholder="Email OTP" />
+            <button id="sendEmailOtpBtn" type="button" class="ghost">Send OTP</button>
+          </div>
+          <button id="signupBtn">Verify OTP & Sign Up</button>
           <p class="auth-hint">Already have an account? <button id="toLoginLink" type="button" class="inline-link">Login</button></p>
         </div>
       </div>
@@ -69,8 +92,8 @@
       <nav class="tabs">
         <button class="tab active" data-tab="about">About</button>
         <button class="tab" data-tab="practice">Practice Interview</button>
-        <button class="tab" data-tab="mock">Mock Interview Video</button>
         <button class="tab" data-tab="progress">Progress Tracker</button>
+        <button class="tab" data-tab="ats">ATS Checker</button>
         <button class="tab" data-tab="reports">Reports</button>
         <button class="tab" data-tab="account">Account</button>
       </nav>
@@ -142,6 +165,21 @@
             <input id="useRlMode" type="checkbox" />
             <span>Enable RL Adaptive Coaching</span>
           </label>
+          <label class="rl-toggle-row" for="adaptivePersonality">
+            <input id="adaptivePersonality" type="checkbox" />
+            <span>Adaptive Personality Mode</span>
+          </label>
+          <label for="coachPersonality">Coach Personality</label>
+          <select id="coachPersonality" title="Choose coach personality">
+            <option value="friendly" selected>Friendly mentor</option>
+            <option value="strict">Strict interviewer</option>
+            <option value="faang">Real FAANG interviewer</option>
+          </select>
+          <label class="rl-toggle-row" for="fixWeaknessMode">
+            <input id="fixWeaknessMode" type="checkbox" />
+            <span>Targeted Weakness Training Mode</span>
+          </label>
+          <p id="weaknessModeNote" class="section-subtitle">Mode: Random interview questions.</p>
           <label for="rlDifficulty">RL Difficulty</label>
           <select id="rlDifficulty" title="Choose RL difficulty">
             <option value="easy">Easy</option>
@@ -162,6 +200,11 @@
           <p id="rlSessionState" class="section-subtitle">No active RL session.</p>
         </div>
 
+        <div id="practicePrompt" class="practice-prompt" aria-live="polite">
+          <small>Current question</small>
+          <strong id="practicePromptText"></strong>
+        </div>
+
         <div id="textPractice" class="mode-pane hidden">
           <textarea id="textAnswer" rows="8" placeholder="Type your interview response..."></textarea>
           <button id="analyzeTextBtn" class="cta-main">Analyze Response</button>
@@ -175,7 +218,7 @@
           </div>
           <p id="audioSpeechTimer" class="speech-timer">Recording Time: 00:00</p>
           <textarea id="audioTranscript" rows="6" placeholder="Transcription appears here..."></textarea>
-          <button id="analyzeAudioBtn" class="cta-main">Analyze Audio Response</button>
+          <button id="analyzeAudioBtn" class="cta-main">Analyze Response</button>
         </div>
 
         <div id="videoPractice" class="mode-pane hidden">
@@ -202,48 +245,20 @@
           <button id="submitVideoBtn" class="cta-main">Submit Video Practice</button>
         </div>
 
-        <pre id="analysisResult" class="result"></pre>
-      </section>
-
-      <section id="mock" class="tab-panel card">
-        <h2>Mock Interview Video</h2>
-        <p class="section-subtitle">Generate a simulated interview video based on your role and experience level.</p>
-        <div class="grid-2">
-          <div class="field">
-            <label for="mockRole">Job Position</label>
-            <input id="mockRole" value="Data Analyst" placeholder="Job Role" />
+        <div id="practiceThread" class="practice-thread hidden" aria-live="polite">
+          <div class="practice-thread-header">
+            <h3>Interview Flow</h3>
+            <button id="stopInterviewBtn" type="button" class="ghost">Stop Interview</button>
           </div>
-          <div class="field">
-            <label for="mockExperience">Experience Level</label>
-            <select id="mockExperience" title="Choose experience level">
-              <option>Entry-level</option>
-              <option>Mid-level</option>
-              <option>Senior</option>
-              <option>Executive</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="mockType">Interview Scenario</label>
-            <select id="mockType" title="Choose interview type">
-              <option>Standard</option>
-              <option>Behavioral</option>
-              <option>Technical</option>
-              <option>Case Study</option>
-            </select>
-          </div>
-          <div class="field field-full">
-            <label for="mockDetails">Additional Details</label>
-            <textarea id="mockDetails" rows="4" title="Additional interview details">Proficient in SQL, Python, and Tableau. The company is a growing startup in e-commerce.</textarea>
-          </div>
+          <div id="practiceThreadItems"></div>
         </div>
-        <button id="generateMockBtn" class="cta-main">Generate Mock Interview Video</button>
-        <p id="mockMessage" class="message"></p>
-        <a id="downloadMockLink" class="hidden" target="_blank">Download Generated Video</a>
-        <video id="mockVideoPlayer" class="hidden" controls></video>
-        <details>
-          <summary>Transcript</summary>
-          <pre id="mockTranscript"></pre>
-        </details>
+
+        <pre id="analysisResult" class="result"></pre>
+
+        <div id="agentBrain" class="agent-brain hidden" aria-live="polite">
+          <h3>Decision Visualization (Agent Brain)</h3>
+          <div class="mini-code" id="agentBrainText"></div>
+        </div>
       </section>
 
       <section id="progress" class="tab-panel card">
@@ -268,11 +283,67 @@
           </div>
         </div>
         <p id="progressInsight" class="section-subtitle"></p>
+
+        <div class="coach-panels" aria-live="polite">
+          <div class="coach-panel">
+            <h3>Interview Readiness Score</h3>
+            <div class="mini-code">
+              <div>ATS = Resume quality</div>
+              <div>Readiness = Resume + Answer + Confidence</div>
+            </div>
+            <div class="mini-code" id="readinessNumbers">Start: -<br />End: -</div>
+          </div>
+
+          <div class="coach-panel">
+            <h3>Skill-wise Breakdown</h3>
+            <div class="mini-code" id="skillBreakdown">DSA → -%<br />System Design → -%<br />Communication → -%</div>
+            <p class="section-subtitle" id="weakestSkillNote">Then improve weakest.</p>
+            <p class="section-subtitle">Judges see: personalization, clarity</p>
+          </div>
+
+          <div class="coach-panel">
+            <h3>Feedback Effectiveness Tracker</h3>
+            <div class="mini-code" id="effectivenessNumbers">Hint → - improvement<br />Example → - improvement<br />Follow-up → - improvement</div>
+            <p class="section-subtitle">This proves: RL is real, agent is learning.</p>
+          </div>
+
+          <div class="coach-panel">
+            <h3>Live Improvement Scorecard</h3>
+            <div class="mini-code">Confidence ↑<br />Clarity ↑<br />Technical Depth ↑</div>
+            <div class="mini-code" id="scorecardNumbers">Before: - / - / -<br />After: - / - / -</div>
+            <p class="section-subtitle">Judges love visual progress.</p>
+          </div>
+        </div>
+
         <div class="chart-wrap">
           <canvas id="confidenceChart"></canvas>
         </div>
         <div class="chart-wrap">
           <canvas id="toneChart"></canvas>
+        </div>
+      </section>
+
+      <section id="ats" class="tab-panel card">
+        <h2>ATS Checker</h2>
+        <p class="section-subtitle">Upload your resume and get an ATS-friendly score with actionable checks.</p>
+
+        <div class="ats-upload">
+          <label for="atsResumeFile">Upload Resume (PDF, DOCX, or TXT)</label>
+          <input id="atsResumeFile" type="file" accept=".pdf,.docx,.txt" />
+          <button id="atsCheckBtn" class="cta-main" type="button">Check Resume</button>
+          <p id="atsMessage" class="message"></p>
+        </div>
+
+        <div id="atsResults" class="ats-results hidden" aria-live="polite">
+          <div class="ats-scorecard">
+            <h3>Your Score</h3>
+            <div class="ats-score">
+              <strong id="atsScore">-</strong><span>/100</span>
+            </div>
+            <p class="ats-issues"><span id="atsIssues">-</span> Issues</p>
+          </div>
+
+          <div id="atsGroups" class="ats-groups"></div>
         </div>
       </section>
 
@@ -298,6 +369,47 @@
         <p class="section-subtitle">Manage your profile and view account activity summary.</p>
         <p id="accountUsername">Username:</p>
         <p id="accountSessions">Total Sessions: 0</p>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="accountFullName">Full name</label>
+            <input id="accountFullName" placeholder="Full name" />
+          </div>
+          <div class="field">
+            <label for="accountEmail">Email address</label>
+            <input id="accountEmail" placeholder="Email address" />
+          </div>
+          <div class="field">
+            <label for="accountPhone">Phone number</label>
+            <input id="accountPhone" placeholder="Phone number" />
+          </div>
+          <div class="field">
+            <label for="accountUniversity">University / College</label>
+            <input id="accountUniversity" placeholder="University / College" />
+          </div>
+          <div class="field">
+            <label for="accountCollegeYear">Current year of college</label>
+            <input id="accountCollegeYear" placeholder="Current year of college (e.g., 2)" />
+          </div>
+          <div class="field">
+            <label for="accountDegree">Degree</label>
+            <input id="accountDegree" placeholder="Degree (e.g., B.Tech, BSc)" />
+          </div>
+          <div class="field">
+            <label for="accountMajor">Branch / Major</label>
+            <input id="accountMajor" placeholder="Branch / Major" />
+          </div>
+          <div class="field">
+            <label for="accountLinkedIn">LinkedIn / Portfolio URL</label>
+            <input id="accountLinkedIn" placeholder="LinkedIn / Portfolio URL (optional)" />
+          </div>
+          <div class="field field-full">
+            <label for="accountAbout">About you</label>
+            <textarea id="accountAbout" rows="3" placeholder="About you (goals, interests, etc.)"></textarea>
+          </div>
+        </div>
+
+        <button id="saveAccountBtn" type="button" class="cta-main">Save Changes</button>
         <button id="logoutBtn" class="hidden cta-main">Log Out</button>
       </section>
     </section>
@@ -311,6 +423,11 @@
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+  <script id="firebaseBootstrap" type="application/json">{{ {"enabled": (firebase_enabled or false), "web_config": firebase_web_config} | tojson }}</script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
 
   <script src="/static/app.js"></script>
 </body>
