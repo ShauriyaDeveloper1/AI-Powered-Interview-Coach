@@ -243,6 +243,39 @@ Note: The backend maps the Firebase email to an existing local account by matchi
 - If `API_KEY` is unset, the app falls back to local transcript generation.
 - If `FREEPIK_API_KEY` is unset, placeholder images are used instead.
 
+## Local ML models (optional)
+
+This repo bundles offline model artifacts in `interview_coach_models/` (for example: `emotion_classifier.pkl` and `t5_interview_coach/`).
+
+- The app and RL graders will **attempt** to use these models when available.
+- If ML dependencies are missing, the project **falls back** to the existing deterministic grading/feedback.
+
+### Install optional ML dependencies
+
+- Emotion classifier (small): already works with `joblib` (included in `requirements.txt`).
+- Local T5 feedback (larger): install `torch` and `transformers`.
+
+Example:
+```powershell
+python -m pip install torch transformers
+```
+
+### Configuration
+
+```env
+# Point to an external model directory (defaults to ./interview_coach_models)
+INTERVIEW_COACH_MODELS_DIR=path/to/interview_coach_models
+
+# Disable local models entirely (default: enabled)
+INTERVIEW_COACH_ENABLE_LOCAL_MODELS=0
+
+# Use local ML grade as the environment's final score (default: deterministic)
+INTERVIEW_COACH_GRADE_SOURCE=local_ml
+
+# Append local ML text feedback into the UI feedback blob (default: off)
+INTERVIEW_COACH_APPEND_LOCAL_ML_FEEDBACK=1
+```
+
 ## Usage Instructions
 
 ### Validate OpenEnv specification

@@ -57,7 +57,10 @@ function applyCoachSettingsToUi(summary) {
   const adaptive = document.getElementById("adaptivePersonality");
   const fixWeakness = document.getElementById("fixWeaknessMode");
 
-  if (personality) personality.value = settings.coach_personality || "friendly";
+  if (personality) {
+    personality.value = settings.coach_personality || "friendly";
+    personality.disabled = Boolean(settings.adaptive_personality);
+  }
   if (adaptive) adaptive.checked = Boolean(settings.adaptive_personality);
   if (fixWeakness) fixWeakness.checked = settings.training_mode === "fix_weakness";
 
@@ -935,6 +938,9 @@ async function loginFlow() {
   await loadReports();
   await loadProgress();
   showToast(`Welcome, ${state.username}`);
+  if (state.profile && state.profile.gamification) {
+    updateGamificationUi(state.profile.gamification);
+  }
 }
 
 function resetAccountProfileForm() {
@@ -953,6 +959,48 @@ function resetAccountProfileForm() {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
+}
+
+function updateGamificationUi(gamification, deltaXp = 0, eventSourceElement = null) {
+  if (!gamification) return;
+  
+  const bar = document.getElementById("gamificationBar");
+  if (bar) bar.classList.remove("hidden");
+  
+  const levelEl = document.getElementById("gamiLevel");
+  const xpEl = document.getElementById("gamiXp");
+  const streakEl = document.getElementById("gamiStreak");
+  const progressFill = document.getElementById("gamiProgressFill");
+  const progressText = document.getElementById("gamiProgressText");
+  const badgesContainer = document.getElementById("gamiBadgesContainer");
+  
+  if (levelEl) levelEl.textContent = gamification.level || 1;
+  if (xpEl) xpEl.textContent = gamification.total_xp || gamification.xp || 0;
+  if (streakEl) streakEl.textContent = gamification.streak || 0;
+  
+  const levelXp = (gamification.total_xp || gamification.xp || 0) % 100;
+  if (progressFill) progressFill.style.width = `${levelXp}%`;
+  if (progressText) progressText.textContent = `${levelXp}%`;
+  
+  if (badgesContainer) {
+    const badges = gamification.badges || [];
+    if (badges.length > 0) {
+      badgesContainer.innerHTML = badges.map(b => `<span class="gami-badge">${b}</span>`).join("");
+    } else {
+      badgesContainer.innerHTML = `<span class="gami-badge empty">No badges yet</span>`;
+    }
+  }
+  
+  if (deltaXp > 0 && eventSourceElement) {
+    const floatEl = document.createElement("div");
+    floatEl.className = "floating-xp";
+    floatEl.textContent = `+${deltaXp} XP!`;
+    const rect = eventSourceElement.getBoundingClientRect();
+    floatEl.style.left = `${rect.left + rect.width / 2}px`;
+    floatEl.style.top = `${rect.top + window.scrollY}px`;
+    document.body.appendChild(floatEl);
+    setTimeout(() => { floatEl.remove(); }, 1500);
+  }
 }
 
 function populateAccountProfileForm(profile) {
@@ -1192,6 +1240,11 @@ async function submitTextPractice() {
   }
   setLoading(false);
 
+  if (result && result.gamification) {
+    const btn = document.getElementById("submitTextBtn") || document.body;
+    updateGamificationUi(result.gamification, result.gamification.earned_xp, btn);
+  }
+
   state.practiceThread.turns = turns;
   appendPracticeTurn(question, answer);
   state.practiceThread.nextQuestion = result.follow_up_question || null;
@@ -1259,6 +1312,11 @@ async function submitAudioPractice() {
     });
   }
   setLoading(false);
+
+  if (result && result.gamification) {
+    const btn = document.getElementById("submitAudioBtn") || document.body;
+    updateGamificationUi(result.gamification, result.gamification.earned_xp, btn);
+  }
 
   state.practiceThread.turns = turns;
   appendPracticeTurn(question, transcription);
@@ -1374,6 +1432,11 @@ async function submitVideoPractice() {
     });
   }
   setLoading(false);
+
+  if (result && result.gamification) {
+    const btn = document.getElementById("submitVideoBtn") || document.body;
+    updateGamificationUi(result.gamification, result.gamification.earned_xp, btn);
+  }
 
   state.practiceThread.turns = turns;
   appendPracticeTurn(question, transcription);
@@ -1535,9 +1598,17 @@ function setupEvents() {
   if (personality) {
     personality.addEventListener("change", async () => {
       try {
+        const adaptiveCheckbox = document.getElementById("adaptivePersonality");
+        let adaptiveVal = false;
+        if (adaptiveCheckbox && adaptiveCheckbox.checked) {
+          adaptiveCheckbox.checked = false;
+        }
         await api("/api/coach/settings", {
           method: "POST",
-          body: { coach_personality: personality.value }
+          body: { 
+            coach_personality: personality.value,
+            adaptive_personality: false 
+          }
         });
         state.rlSessionStarted = false;
         resetRlSummary();
@@ -1553,6 +1624,9 @@ function setupEvents() {
   if (adaptive) {
     adaptive.addEventListener("change", async () => {
       try {
+        if (personality) {
+          personality.disabled = adaptive.checked;
+        }
         await api("/api/coach/settings", {
           method: "POST",
           body: { adaptive_personality: Boolean(adaptive.checked) }

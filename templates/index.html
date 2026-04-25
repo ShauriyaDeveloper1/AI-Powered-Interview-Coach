@@ -98,6 +98,22 @@
         <button class="tab" data-tab="account">Account</button>
       </nav>
 
+      <!-- GAMIFICATION DASHBOARD -->
+      <div id="gamificationBar" class="gamification-bar hidden">
+        <div class="gami-stats">
+          <div class="gami-stat gami-level">Level <span id="gamiLevel">1</span></div>
+          <div class="gami-stat gami-xp">XP: <span id="gamiXp">0</span></div>
+          <div class="gami-stat gami-streak"><span id="gamiStreak">0</span> 🔥 Streak</div>
+        </div>
+        <div class="gami-progress-container">
+          <div class="gami-progress-label">Interview Readiness <span id="gamiProgressText">0%</span></div>
+          <div class="gami-progress-bar">
+            <div id="gamiProgressFill" class="gami-progress-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+
+
       <section id="about" class="tab-panel active card">
         <p class="about-kicker">Interview Prep, Reimagined</p>
         <h2 class="about-title">Level up your interview game with real-time AI coaching</h2>
@@ -285,6 +301,14 @@
         <p id="progressInsight" class="section-subtitle"></p>
 
         <div class="coach-panels" aria-live="polite">
+          <div class="coach-panel gami-badges-panel">
+            <h3>Skill Badges 🏅</h3>
+            <div id="gamiBadgesContainer" class="badges-container">
+              <span class="gami-badge empty">No badges yet</span>
+            </div>
+            <p class="section-subtitle">Unlock badges by scoring highly.</p>
+          </div>
+
           <div class="coach-panel">
             <h3>Interview Readiness Score</h3>
             <div class="mini-code">

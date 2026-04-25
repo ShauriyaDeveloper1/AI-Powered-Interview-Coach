@@ -742,29 +742,70 @@ def create_progress_report_pdf(username, reports, start_date=None, end_date=None
         elements.append(Paragraph("No data available for the selected date range.", styles["Normal"]))
     else:
         num_sessions = len(filtered_reports)
-        avg_confidence = (
-            sum(r["analysis"]["confidence"]["confidence_score"] for r in filtered_reports) / num_sessions
-        )
-        avg_sentiment = sum(r["analysis"]["tone"]["score"] for r in filtered_reports) / num_sessions
+        
+        # Calculate averages safely, supporting both legacy and new session-based formats
+        total_conf = 0
+        total_sent = 0
+        valid_conf_count = 0
+        valid_sent_count = 0
+        
+        for r in filtered_reports:
+            if r.get("type") == "session":
+                turns = r.get("turns", [])
+                for t in turns:
+                    analysis = t.get("analysis", {})
+                    if "confidence" in analysis:
+                        total_conf += analysis["confidence"].get("confidence_score", 0)
+                        valid_conf_count += 1
+                    if "tone" in analysis:
+                        total_sent += analysis["tone"].get("score", 0)
+                        valid_sent_count += 1
+            else:
+                if "analysis" in r:
+                    total_conf += r["analysis"].get("confidence", {}).get("confidence_score", 0)
+                    total_sent += r["analysis"].get("tone", {}).get("score", 0)
+                    valid_conf_count += 1
+                    valid_sent_count += 1
+
+        avg_confidence = (total_conf / valid_conf_count) if valid_conf_count > 0 else 0
+        avg_sentiment = (total_sent / valid_sent_count) if valid_sent_count > 0 else 0
 
         elements.append(Paragraph(f"Sessions Analyzed: {num_sessions}", styles["Normal"]))
         elements.append(Paragraph(f"Average Confidence Score: {avg_confidence:.1f}/10", styles["Normal"]))
         elements.append(Paragraph(f"Average Tone Score: {avg_sentiment:.2f}", styles["Normal"]))
         elements.append(Spacer(1, 20))
 
-        table_data = [["Date", "Question", "Confidence", "Tone", "Professional", "Filler"]]
+        table_data = [["Date", "Question/Session", "Avg Confidence", "Avg Tone", "Prof Words", "Filler Words"]]
         for report in filtered_reports:
-            q = report["question"][:30] + "..." if len(report["question"]) > 30 else report["question"]
-            table_data.append(
-                [
-                    report["date"],
+            if report.get("type") == "session":
+                turns = report.get("turns", [])
+                if not turns:
+                    continue
+                q = report.get("root_question", "Session")[:30] + "..."
+                
+                t_conf = sum(t["analysis"].get("confidence", {}).get("confidence_score", 0) for t in turns if "analysis" in t)
+                t_tone = sum(t["analysis"].get("tone", {}).get("score", 0) for t in turns if "analysis" in t)
+                prof_w = sum(t["analysis"].get("word_choice", {}).get("professional_word_count", 0) for t in turns if "analysis" in t)
+                fill_w = sum(t["analysis"].get("word_choice", {}).get("filler_word_count", 0) for t in turns if "analysis" in t)
+                
+                table_data.append([
+                    report.get("date", "Unknown"),
                     q,
-                    f"{report['analysis']['confidence']['confidence_score']:.1f}",
-                    f"{report['analysis']['tone']['score']:.2f}",
-                    str(report["analysis"]["word_choice"]["professional_word_count"]),
-                    str(report["analysis"]["word_choice"]["filler_word_count"]),
-                ]
-            )
+                    f"{(t_conf / len(turns)):.1f}",
+                    f"{(t_tone / len(turns)):.2f}",
+                    str(prof_w),
+                    str(fill_w),
+                ])
+            else:
+                q = report.get("question", "")[:30] + "..."
+                table_data.append([
+                    report.get("date", "Unknown"),
+                    q,
+                    f"{report.get('analysis', {}).get('confidence', {}).get('confidence_score', 0):.1f}",
+                    f"{report.get('analysis', {}).get('tone', {}).get('score', 0):.2f}",
+                    str(report.get("analysis", {}).get("word_choice", {}).get("professional_word_count", 0)),
+                    str(report.get("analysis", {}).get("word_choice", {}).get("filler_word_count", 0)),
+                ])
 
         table = Table(table_data, colWidths=[80, 150, 80, 80, 80, 80])
         table.setStyle(
@@ -1039,6 +1080,70 @@ def _upsert_user_profile(username: str, updates: dict) -> dict:
     _save_users(users)
     return profile
 
+
+def _calculate_gamification(username: str, grade: float, is_boss: bool = False) -> dict:
+    profile = _get_user_profile(username)
+    gamification = profile.get("gamification")
+    if not isinstance(gamification, dict):
+        gamification = {"xp": 0, "streak": 0, "badges": [], "level": 1, "last_grade": 0.0}
+    
+    base_xp = int(grade * 100)
+    bonus_xp = 0
+    
+    last_grade = float(gamification.get("last_grade", 0.0))
+    streak = int(gamification.get("streak", 0))
+    
+    if grade > last_grade and grade > 0.5:
+        streak += 1
+    elif grade < 0.5:
+        streak = 0
+        
+    if streak >= 3:
+        bonus_xp += 30
+        
+    if is_boss and grade > 0.7:
+        bonus_xp += 100
+        
+    if grade >= 0.9:
+        bonus_xp += 20
+        
+    earned_xp = base_xp + bonus_xp
+    gamification["xp"] = int(gamification.get("xp", 0)) + earned_xp
+    gamification["last_grade"] = grade
+    gamification["streak"] = streak
+    
+    old_level = int(gamification.get("level", 1))
+    new_level = int(gamification["xp"] / 100) + 1
+    gamification["level"] = new_level
+    
+    badges = gamification.get("badges", [])
+    new_badges = []
+    
+    if new_level >= 2 and "Intermediate" not in badges:
+        new_badges.append("Intermediate")
+    if new_level >= 3 and "Advanced" not in badges:
+        new_badges.append("Advanced")
+    if new_level >= 4 and "Interview Ready 🔥" not in badges:
+        new_badges.append("Interview Ready 🔥")
+        
+    if grade >= 0.9 and "Communication Pro" not in badges:
+        new_badges.append("Communication Pro")
+        
+    if new_badges:
+        badges.extend(new_badges)
+        gamification["badges"] = badges
+    
+    _upsert_user_profile(username, {"gamification": gamification})
+    
+    return {
+        "earned_xp": earned_xp,
+        "total_xp": gamification["xp"],
+        "level": new_level,
+        "level_up": new_level > old_level,
+        "streak": streak,
+        "new_badges": new_badges,
+        "is_boss": is_boss
+    }
 
 def _clamp01(value: float) -> float:
     try:
@@ -1696,6 +1801,34 @@ def _build_analysis_payload(question, answer, posture=None):
     if posture:
         analysis["posture"] = posture
     feedback = coach.provide_comprehensive_feedback(analysis)
+
+    # Optional: enrich with offline/local ML model outputs (T5 + emotion classifier).
+    # This is best-effort and never blocks the core app flow.
+    try:
+        from interview_coach_models.ml_answer_grader import get_ml_answer_grader
+
+        ml_grader = get_ml_answer_grader()
+    except Exception:
+        ml_grader = None
+
+    if ml_grader is not None:
+        try:
+            ml_out = ml_grader.grade(question=question or "", answer=answer or "", keywords=[])
+        except Exception:
+            ml_out = None
+
+        if isinstance(ml_out, dict) and ml_out:
+            analysis["local_ml"] = {
+                "grade": ml_out.get("grade"),
+                "emotion": ml_out.get("emotion"),
+                "feedback": ml_out.get("ml_feedback"),
+            }
+
+            append_ml = (os.getenv("INTERVIEW_COACH_APPEND_LOCAL_ML_FEEDBACK") or "").strip().lower()
+            if append_ml in {"1", "true", "yes", "on"}:
+                ml_text = str(ml_out.get("ml_feedback") or "").strip()
+                if ml_text:
+                    feedback = f"{feedback}\n\nLOCAL ML FEEDBACK\n{ml_text}"
     return {
         "question": question,
         "answer": answer,
@@ -2045,16 +2178,13 @@ def api_practice_text():
     if not thread_turns:
         thread_turns = [{"question": question, "answer": answer}]
     payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
-    save_interview_report(
-        username,
-        {
-            "question": question,
-            "answer": answer,
-            "analysis": payload["analysis"],
-            "task_skill": _infer_skill_from_question(question),
-            "coach_personality_used": personality_used,
-        },
-    )
+    dims = _dimension_scores_from_report({"analysis": payload["analysis"]})
+    grade = (dims.get("confidence", 0) + dims.get("clarity", 0) + dims.get("technical_depth", 0)) / 3.0
+    is_boss = len(thread_turns) > 0 and len(thread_turns) % 4 == 0
+    payload["gamification"] = _calculate_gamification(username, grade, is_boss)
+    if is_boss:
+        payload["follow_up_question"] = "🔥 FINAL BOSS QUESTION (Hard): " + payload["follow_up_question"]
+
     return jsonify(payload)
 
 
@@ -2082,16 +2212,13 @@ def api_practice_audio():
     if not thread_turns:
         thread_turns = [{"question": question, "answer": transcription}]
     payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
-    save_interview_report(
-        username,
-        {
-            "question": question,
-            "answer": transcription,
-            "analysis": payload["analysis"],
-            "task_skill": _infer_skill_from_question(question),
-            "coach_personality_used": personality_used,
-        },
-    )
+    dims = _dimension_scores_from_report({"analysis": payload["analysis"]})
+    grade = (dims.get("confidence", 0) + dims.get("clarity", 0) + dims.get("technical_depth", 0)) / 3.0
+    is_boss = len(thread_turns) > 0 and len(thread_turns) % 4 == 0
+    payload["gamification"] = _calculate_gamification(username, grade, is_boss)
+    if is_boss:
+        payload["follow_up_question"] = "🔥 FINAL BOSS QUESTION (Hard): " + payload["follow_up_question"]
+
     return jsonify(payload)
 
 
@@ -2161,16 +2288,13 @@ def api_practice_video():
     if not thread_turns:
         thread_turns = [{"question": question, "answer": transcription}]
     payload["follow_up_question"] = _generate_followup_question(root_question, thread_turns)
-    save_interview_report(
-        username,
-        {
-            "question": question,
-            "answer": transcription,
-            "analysis": payload["analysis"],
-            "task_skill": _infer_skill_from_question(question),
-            "coach_personality_used": personality_used,
-        },
-    )
+    dims = _dimension_scores_from_report({"analysis": payload["analysis"]})
+    grade = (dims.get("confidence", 0) + dims.get("clarity", 0) + dims.get("technical_depth", 0)) / 3.0
+    is_boss = len(thread_turns) > 0 and len(thread_turns) % 4 == 0
+    payload["gamification"] = _calculate_gamification(username, grade, is_boss)
+    if is_boss:
+        payload["follow_up_question"] = "🔥 FINAL BOSS QUESTION (Hard): " + payload["follow_up_question"]
+
     return jsonify(payload)
 
 
@@ -2659,21 +2783,11 @@ def api_rl_practice_text():
     if example_text:
         payload["agent_brain"]["example"] = example_text
 
-    save_interview_report(
-        username,
-        {
-            "question": question,
-            "answer": answer,
-            "analysis": payload["analysis"],
-            "rl_strategy": rl_strategy,
-            "grade": grade,
-            "rl_episode_id": result.info.get("episode_id") if use_agent_feedback and _rl_agent else "",
-            "coach_action": coach_action,
-            "task_skill": session_state.get("task_skill") or _infer_skill_from_question(question),
-            "coach_personality_used": personality_used,
-        },
-    )
-
+    is_boss = len(thread_turns) > 0 and len(thread_turns) % 4 == 0
+    payload["gamification"] = _calculate_gamification(username, grade, is_boss)
+    if is_boss:
+        final_follow_up = "🔥 FINAL BOSS QUESTION (Hard): " + final_follow_up
+        
     attempts = max(int(session_state.get("attempt") or 0), 1)
     raw_total_reward = float(session_state.get("total_reward") or 0.0)
     total_reward_normalized = min(max(raw_total_reward / attempts, 0.0), 1.0)
@@ -2825,6 +2939,21 @@ def openenv_state():
         return _openenv_error(str(exc), 400)
 
     return jsonify(obs.model_dump(mode="json"))
+
+
+@app.post("/api/save_report")
+def api_save_report():
+    if "username" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json or {}
+    report_data = {
+        "type": "session",
+        "root_question": data.get("root_question", "Practice Session"),
+        "turns": data.get("turns", []),
+    }
+    save_interview_report(session["username"], report_data)
+    return jsonify({"status": "success"})
 
 
 @app.post("/step")

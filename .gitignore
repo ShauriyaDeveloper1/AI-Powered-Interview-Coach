@@ -14,3 +14,5 @@ nltk_data/
 ai_powered_interview_coach.egg-info/
 cookies.txt
 tmp_resume.txt
+*.safetensors
+*.pkl

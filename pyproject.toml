@@ -19,6 +19,7 @@ dependencies = [
   "SpeechRecognition",
   "nltk",
   "numpy",
+  "joblib",
   "opencv-python",
   "pandas",
   "matplotlib",
@@ -48,5 +49,9 @@ server = "server.app:main"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["rl_interview_coach*"]
-exclude = ["static*", "templates*", "reports*", "models*", "scripts*"]
+include = ["rl_interview_coach*", "server*", "interview_coach_models*"]
+exclude = ["static*", "templates*", "reports*", "models*", "scripts*", "nltk_data*", "openenv_env*", "openenv_env/**"]
+
+[tool.setuptools.package-data]
+# Ensure bundled model artifacts ship in wheels/sdists.
+interview_coach_models = ["**/*"]

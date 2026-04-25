@@ -6,6 +6,7 @@ Scores answers from 0.0 to 1.0 based on:
 - Structure (especially STAR format)
 - Sentiment analysis
 """
+import os
 import re
 from typing import List, Dict, Tuple
 from nltk.tokenize import word_tokenize
@@ -35,6 +36,49 @@ except LookupError:
 
 sia = SentimentIntensityAnalyzer()
 stop_words = set(stopwords.words('english'))
+
+
+def _local_models_enabled() -> bool:
+    value = (os.getenv("INTERVIEW_COACH_ENABLE_LOCAL_MODELS") or "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _grade_source() -> str:
+    return (os.getenv("INTERVIEW_COACH_GRADE_SOURCE") or "deterministic").strip().lower()
+
+
+def _try_enrich_with_local_ml(details: Dict, question: str, answer: str, keywords: List[str]) -> None:
+    """Attach optional ML metadata into the `details` dict.
+
+    This never raises and will silently no-op when dependencies are missing.
+    """
+
+    if not _local_models_enabled():
+        return
+
+    try:
+        from interview_coach_models.ml_answer_grader import get_ml_answer_grader
+    except Exception:
+        return
+
+    try:
+        grader = get_ml_answer_grader()
+        if grader is None:
+            return
+        result = grader.grade(question=question or "", answer=answer or "", keywords=keywords or [])
+    except Exception:
+        return
+
+    try:
+        details["ml_grade"] = float(result.get("grade"))
+    except Exception:
+        pass
+    ml_feedback = result.get("ml_feedback")
+    if isinstance(ml_feedback, str) and ml_feedback.strip():
+        details["ml_feedback"] = ml_feedback.strip()
+    emotion = result.get("emotion")
+    if isinstance(emotion, str) and emotion.strip():
+        details["emotion"] = emotion.strip()
 
 
 class AnswerGrader:
@@ -145,6 +189,11 @@ class GeneralAnswerGrader(AnswerGrader):
         # Weighted average, clamped to strict (0, 1)
         final_score = sum(s * w for _, s, w in scores)
         final_score = _clamp_score(final_score)
+
+        _try_enrich_with_local_ml(details, question=question, answer=answer, keywords=keywords)
+        if _grade_source() in {"ml", "local_ml", "local"} and isinstance(details.get("ml_grade"), float):
+            final_score = _clamp_score(details["ml_grade"])
+
         details['final_score'] = final_score
         
         return final_score, details
@@ -190,7 +239,8 @@ class GeneralAnswerGrader(AnswerGrader):
 class BehavioralAnswerGrader(AnswerGrader):
     """Grader for behavioral (STAR format) questions."""
     
-    def __init__(self):
+    def __init__(self, question: str | None = None):
+        self.question = question or ""
         self.star_keywords = {
             'situation': [
                 'was', 'were', 'when', 'where', 'team', 'project', 'challenge'
@@ -244,6 +294,18 @@ class BehavioralAnswerGrader(AnswerGrader):
             sentiment * 0.15
         )
         final_score = _clamp_score(final_score)
+
+        flat_keywords: List[str] = []
+        try:
+            for group in self.star_keywords.values():
+                flat_keywords.extend([str(v) for v in group])
+        except Exception:
+            flat_keywords = []
+
+        _try_enrich_with_local_ml(details, question=self.question, answer=answer, keywords=flat_keywords)
+        if _grade_source() in {"ml", "local_ml", "local"} and isinstance(details.get("ml_grade"), float):
+            final_score = _clamp_score(details["ml_grade"])
+
         details['final_score'] = final_score
         return final_score, details
     
@@ -308,6 +370,11 @@ class TechnicalAnswerGrader(AnswerGrader):
             code_score * 0.2
         )
         final_score = _clamp_score(final_score)
+
+        _try_enrich_with_local_ml(details, question=question, answer=answer, keywords=[])
+        if _grade_source() in {"ml", "local_ml", "local"} and isinstance(details.get("ml_grade"), float):
+            final_score = _clamp_score(details["ml_grade"])
+
         details['final_score'] = final_score
         return final_score, details
     
@@ -377,7 +444,7 @@ def get_grader(question: str, difficulty: str) -> Tuple[AnswerGrader, str]:
     
     # Determine question type
     if any(bq in question_lower for bq in behavioral_questions):
-        return BehavioralAnswerGrader(), "behavioral"
+        return BehavioralAnswerGrader(question=question), "behavioral"
     elif any(tq in question_lower for tq in technical_questions):
         return TechnicalAnswerGrader(), "technical"
     else:
