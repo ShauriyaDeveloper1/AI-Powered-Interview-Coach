@@ -14,25 +14,34 @@ tags:
 
 A full-stack Flask application combining interactive interview practice with reinforcement learning feedback policy optimization.
 
+## Important Links
+- 🎥 **Video Demonstration:** [Watch on YouTube](https://youtu.be/xXdJKlznc2g?si=mI-OhNjt-l5tVC6q)
+- 📓 **Agent Training & Data Analysis:** [View Colab Notebook](https://colab.research.google.com/drive/1Iu-Tg60nLtEEi4SkK2SEISX_1H_RUWI7)
+- 💻 **Source Code Repository:** [Hugging Face Space Tree](https://huggingface.co/spaces/Shauriya24/AI-Powered-Interview-Coach/tree/main)
+
 **Two components:**
 1. **Web App** — Interview practice with text/audio/video modes and instant AI feedback.
 2. **RL Environment** — OpenEnv-compliant `InterviewCoachEnv` for learning optimized coaching strategies.
 
-## Environment Description and Motivation
+## Problem Motivation
 
-Interview coaching is inherently iterative: *the same answer quality can improve or stagnate depending on feedback style*. This project models interview coaching as a sequential decision process where an RL agent learns which feedback strategy (strict, moderate, hint) maximizes answer improvement.
+In the competitive landscape of job searching, interview coaching is highly subjective and inherently iterative: *the same answer quality can improve or stagnate depending on the feedback style*. Traditional AI solutions often provide static, one-size-fits-all feedback that fails to adapt to the user's progress or learning style, leading to diminished returns over repeated attempts.
 
-**Motivation:**
-- Static, one-size-fits-all feedback is ineffective for personalized coaching.
-- Different answer quality levels require different teaching strategies.
-- RL enables data-driven policy learning: per-session, which coaching action best improves the next attempt?
+This project treats interview coaching as a sequential decision-making problem. We solve this by modeling an OpenEnv-compliant reinforcement learning (RL) environment (`InterviewCoachEnv`) where an RL agent acts as the coach. The agent learns from interactive sessions which feedback strategy (strict criticism, moderate balancing, or gentle hints) maximizes user improvement.
 
-**How it works:**
-- **Episode:** One interview question session.
-- **Observation:** Answer quality metrics (keyword coverage, sentiment, structure quality, grading metrics).
-- **Action:** Agent selects feedback strategy (strict/moderate/hint).
-- **Reward:** Grade improvement + efficiency bonuses/penalties.
-- **Episode ends:** When target grade is reached or max attempts exhausted.
+**Key Problems Addressed:**
+- **Static Feedback Failure:** One-size-fits-all advice is ineffective for personalized, dynamic learning.
+- **Adaptive Coaching Requirements:** Different answer quality levels require different teaching strategies.
+- **Data-Driven Policy Learning:** Leveraging RL enables learning the optimal coaching action to maximize answer improvement per-session.
+
+## How the Environment Works
+
+The core of the RL training is an interactive step-by-step coaching environment:
+- **Episode (Session):** One complete interview question session where a user iteratively refines their answer.
+- **Observation Space:** High-dimensional answer quality metrics including keyword coverage, sentiment score, structure quality, and past grading history.
+- **Action Space:** The agent chooses a feedback policy: `strict` (direct & detailed criticism), `moderate` (balanced strengths & weaknesses), or `hint` (lightweight guidance).
+- **Reward Function:** Driven by grade improvement `(+10)`. Penalizes excessive attempts to encourage efficiency `(-0.5 * attempt)`. Rewards achieving the target grade `(+5)`.
+- **Termination:** The episode gracefully concludes when the candidate reaches the target acceptable grade or exceeds the maximum number of allowed attempts.
 
 ## Action Space
 
@@ -97,16 +106,14 @@ Defined in `rl_interview_coach/environment/tasks.py::TaskBank`. Nine total tasks
 	- Audio response analysis (speech-to-text + feedback)
 	- Text response analysis
 	- Video interview practice with posture guidance
+- ATS Resume Scanner:
+	- Built-in PDF parsing and resume grading
+	- Intelligent job capability matching against descriptions
 - Detailed evaluation across:
 	- Tone/sentiment
 	- Confidence
 	- Professional vocabulary and filler words
 	- Posture status and recommendations
-- Mock interview video generator:
-	- AI-generated interview transcript
-	- Voice narration (interviewer/candidate style)
-	- AI-generated realistic images
-	- Final assembled MP4 video
 - Progress tracking dashboards and downloadable PDF reports
 
 ## Tech Stack
@@ -210,184 +217,34 @@ AI-Powered-Interview-Coach/
 
 ## Setup Instructions
 
-### 1) Create virtual environment and install dependencies
+### 1) Environment Setup
 
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-**macOS/Linux:**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 2) Configure environment variables
+### 2) Core Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root or configure Space Secrets:
 
 ```env
-# For web app and baseline/inference scripts
 API_KEY=your_openai_or_aiml_api_key
-
-# For AIML API (if using non-default endpoint)
-API_BASE_URL=https://api.aimlapi.com/v1
-# or
-OPENAI_BASE_URL=https://api.aimlapi.com/v1
-
-# For inference.py submission flow
-MODEL_NAME=your_model_name
-API_BASE_URL=https://your-proxy-base-url/v1
-API_KEY=your-proxy-api-key
-
-# Optional: Production security
+FREEPIK_API_KEY=your_freepik_api_key
 FLASK_SECRET_KEY=your_secret_key_here
-
-# Optional: Email OTP (signup verification)
-# If SMTP_* is not set, the app runs in dev mode and prints OTPs to the server console.
-SMTP_HOST=smtp.yourprovider.com
-SMTP_PORT=587
-SMTP_USER=your_smtp_username
-SMTP_PASSWORD=your_smtp_password
-SMTP_FROM=your_from_address@example.com
-
-# Optional: Firebase Admin (creates/updates Firebase Auth user on successful OTP-verified signup)
-# NOTE: Firebase does not natively send a 6-digit OTP to email; this project uses server-side email OTP,
-# and (optionally) syncs the verified user into Firebase Auth.
-FIREBASE_SERVICE_ACCOUNT_PATH=path/to/serviceAccountKey.json
-# or
-FIREBASE_SERVICE_ACCOUNT_JSON={...service account json...}
-
-# Optional: Firebase Web (enables Email-Link sign-in in the UI)
-# Put these values from Firebase Console → Project settings → Your apps (Web app config).
-FIREBASE_WEB_API_KEY=...
-FIREBASE_WEB_AUTH_DOMAIN=your-project.firebaseapp.com
-FIREBASE_WEB_PROJECT_ID=your-project-id
-FIREBASE_WEB_APP_ID=...
-# Optional extras (only needed if you use these Firebase products)
-FIREBASE_WEB_STORAGE_BUCKET=...
-FIREBASE_WEB_MESSAGING_SENDER_ID=...
 ```
 
-### Firebase email-link sign-in (passwordless login)
+*(Note: Additional configurations for advanced features, such as Firebase passwordless login and local ML model fallbacks, are detailed in the repository's `.env_example` file).*
 
-This project supports Firebase **Email Link** sign-in in the Login panel.
+## RL Module Integration
 
-1. In Firebase Console → Authentication → Sign-in method → **Email/Password**:
-	- Enable it
-	- Enable **Email link (passwordless sign-in)**
-2. In Firebase Console → Authentication → Settings → **Authorized domains**:
-	- Add `localhost` (recommended for local dev)
-3. Set both:
-	- `FIREBASE_SERVICE_ACCOUNT_PATH` (server-side verification via Admin SDK)
-	- `FIREBASE_WEB_*` variables (client-side Firebase Web SDK)
-4. Restart the Flask app and use **Send Link** → click the emailed link → **Complete sign-in** if prompted.
+The RL training endpoints (`/api/rl/*` and `/reset`, `/state`, `/step`) require the `rl_interview_coach` module to successfully initialize at startup. If Heavy ML dependencies (torch, transformers) are missing or fail to load due to deployment constraints, the project gracefully falls back to deterministic grading so core functions remain active.
 
-Note: The backend maps the Firebase email to an existing local account by matching `profile.email`. If the email is not found, sign up first.
-
-**Notes:**
-- `.env` is auto-loaded by app.py and baseline.py (via python-dotenv).
-- Add `.env` to `.gitignore` before committing.
-- If `API_KEY` is unset, the app falls back to local transcript generation.
-- If `FREEPIK_API_KEY` is unset, placeholder images are used instead.
-
-## Local ML models (optional)
-
-This repo bundles offline model artifacts in `interview_coach_models/` (for example: `emotion_classifier.pkl` and `t5_interview_coach/`).
-
-- The app and RL graders will **attempt** to use these models when available.
-- If ML dependencies are missing, the project **falls back** to the existing deterministic grading/feedback.
-
-### Install optional ML dependencies
-
-- Emotion classifier (small): already works with `joblib` (included in `requirements.txt`).
-- Local T5 feedback (larger): install `torch` and `transformers`.
-
-Example:
-```powershell
-python -m pip install torch transformers
-```
-
-### Configuration
-
-```env
-# Point to an external model directory (defaults to ./interview_coach_models)
-INTERVIEW_COACH_MODELS_DIR=path/to/interview_coach_models
-
-# Disable local models entirely (default: enabled)
-INTERVIEW_COACH_ENABLE_LOCAL_MODELS=0
-
-# Use local ML grade as the environment's final score (default: deterministic)
-INTERVIEW_COACH_GRADE_SOURCE=local_ml
-
-# Append local ML text feedback into the UI feedback blob (default: off)
-INTERVIEW_COACH_APPEND_LOCAL_ML_FEEDBACK=1
-```
-
-## RL Module Availability
-
-The RL training endpoints (`/api/rl/*` and `/reset`, `/state`, `/step`) require the `rl_interview_coach` module to be successfully imported at startup.
-
-### What causes RL unavailability?
-
-- **Missing dependencies**: scipy, scikit-learn, torch, transformers not installed
-- **Environment issues**: PyTorch initialization failure (e.g., CUDA not available)
-- **Model loading**: T5 model files corrupt or missing
-- **Deployment constraints**: Memory-limited environments (e.g., Hugging Face Spaces free tier)
-
-### Checking RL availability
-
-Use the **diagnostics endpoint** to check what features are available:
-
+You can verify RL availability via the diagnostics endpoint:
 ```bash
 curl http://localhost:7860/api/diagnostics
 ```
-
-Response:
-```json
-{
-  "rl_available": true,
-  "rl_error": null,
-  "firebase_available": false,
-  "features": {
-    "basic_practice": true,
-    "audio_practice": true,
-    "video_practice": true,
-    "mock_interview": true,
-    "ats_checker": true,
-    "rl_training": true,
-    "openenv_api": true
-  }
-}
-```
-
-If `rl_available` is `false`, check the `rl_error` message for details. The error will also be returned in API responses:
-
-```json
-{
-  "error": "RL module is unavailable in this runtime (ModuleNotFoundError: No module named 'torch')"
-}
-```
-
-### Workaround for limited environments
-
-If deploying to a memory-limited platform (e.g., Hugging Face Spaces free tier):
-
-1. **Users can still use basic/mock interviews** even if RL is unavailable
-2. **RL features fail gracefully** with 503 errors and helpful messages
-3. **Consider deploying to a paid tier** or local machine if RL features are critical
-
-### Ensuring RL works on deployment
-
-1. **Include all dependencies**: Ensure `requirements.txt` has scipy, scikit-learn, torch, transformers
-2. **Allocate sufficient resources**: RL + torch requires ~2GB RAM minimum
-3. **Test locally first**: Run `python -c "from rl_interview_coach import InterviewCoachEnv"` to validate
 
 ## Usage Instructions
 
@@ -451,11 +308,9 @@ Output: `reports/inference_scores.json` — model-specific benchmark metrics.
 
 | Issue | Fix |
 |---|---|
-| `No module named moviepy.editor` | Use the pinned `moviepy==1.0.3` from requirements. |
 | Browser speech recognition not working | Use a Chromium-based browser and ensure microphone permission is granted. |
-| Video generation fails | Install FFmpeg and ensure it is available on PATH. |
 | API errors (403/quota) | Verify key validity, quota, and billing on your provider account. |
-| `API_KEY` not found (baseline/inference) | Create/update `.env` file in project root with your key. The app auto-loads it. |
+| `API_KEY` not found | Provide the environment variables in your Hugging Face Space settings or local `.env` file. |
 
 ## Contributing
 
