@@ -331,6 +331,65 @@ INTERVIEW_COACH_GRADE_SOURCE=local_ml
 INTERVIEW_COACH_APPEND_LOCAL_ML_FEEDBACK=1
 ```
 
+## RL Module Availability
+
+The RL training endpoints (`/api/rl/*` and `/reset`, `/state`, `/step`) require the `rl_interview_coach` module to be successfully imported at startup.
+
+### What causes RL unavailability?
+
+- **Missing dependencies**: scipy, scikit-learn, torch, transformers not installed
+- **Environment issues**: PyTorch initialization failure (e.g., CUDA not available)
+- **Model loading**: T5 model files corrupt or missing
+- **Deployment constraints**: Memory-limited environments (e.g., Hugging Face Spaces free tier)
+
+### Checking RL availability
+
+Use the **diagnostics endpoint** to check what features are available:
+
+```bash
+curl http://localhost:7860/api/diagnostics
+```
+
+Response:
+```json
+{
+  "rl_available": true,
+  "rl_error": null,
+  "firebase_available": false,
+  "features": {
+    "basic_practice": true,
+    "audio_practice": true,
+    "video_practice": true,
+    "mock_interview": true,
+    "ats_checker": true,
+    "rl_training": true,
+    "openenv_api": true
+  }
+}
+```
+
+If `rl_available` is `false`, check the `rl_error` message for details. The error will also be returned in API responses:
+
+```json
+{
+  "error": "RL module is unavailable in this runtime (ModuleNotFoundError: No module named 'torch')"
+}
+```
+
+### Workaround for limited environments
+
+If deploying to a memory-limited platform (e.g., Hugging Face Spaces free tier):
+
+1. **Users can still use basic/mock interviews** even if RL is unavailable
+2. **RL features fail gracefully** with 503 errors and helpful messages
+3. **Consider deploying to a paid tier** or local machine if RL features are critical
+
+### Ensuring RL works on deployment
+
+1. **Include all dependencies**: Ensure `requirements.txt` has scipy, scikit-learn, torch, transformers
+2. **Allocate sufficient resources**: RL + torch requires ~2GB RAM minimum
+3. **Test locally first**: Run `python -c "from rl_interview_coach import InterviewCoachEnv"` to validate
+
 ## Usage Instructions
 
 ### Validate OpenEnv specification

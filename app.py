@@ -7,6 +7,7 @@ import queue
 import re
 import secrets
 import smtplib
+import sys
 import tempfile
 import threading
 import time
@@ -190,6 +191,7 @@ _rl_agent = None
 _session_episodes = {}
 _rl_available = False
 _openenv_env = None
+_rl_error = None
 
 try:
     from rl_interview_coach import (
@@ -202,7 +204,9 @@ try:
     )
 
     _rl_available = True
-except Exception:
+except Exception as e:
+    _rl_error = str(e)
+    print(f"[WARNING] RL module import failed: {_rl_error}", file=sys.stderr)
     _rl_available = False
 
 
@@ -1593,22 +1597,8 @@ def api_update_profile():
 
 @app.post("/api/auth/send-email-otp")
 def api_send_email_otp():
-    data = request.get_json(force=True)
-    email = (data.get("email") or "").strip()
-    if not _is_valid_email(email):
-        return jsonify({"error": "Please enter a valid email address"}), 400
-
-    otp = _generate_otp()
-    _email_otp_store[email.lower()] = {
-        "otp_hash": _otp_hash(email, otp),
-        "expires_at": time.time() + _OTP_TTL_SECONDS,
-        "created_at": time.time(),
-    }
-
-    ok, msg = _send_email_otp(email, otp)
-    if not ok:
-        return jsonify({"error": msg}), 500
-    return jsonify({"ok": True, "message": msg})
+    """OTP-based signup is disabled. Please use username/password signup."""
+    return jsonify({"error": "OTP signup is disabled. Please use the standard signup form."}), 403
 
 
 @app.post("/api/signup")
@@ -1627,7 +1617,6 @@ def api_signup():
     major = (data.get("major") or "").strip()
     linkedin = (data.get("linkedin") or "").strip()
     about = (data.get("about") or "").strip()
-    otp = (data.get("otp") or "").strip()
 
     if not username or not password or not confirm_password:
         return jsonify({"error": "Please fill in username and password fields"}), 400
@@ -1644,18 +1633,6 @@ def api_signup():
 
     if not college_year.isdigit() or not (1 <= int(college_year) <= 8):
         return jsonify({"error": "Current year of college must be a number (1-8)"}), 400
-
-    # OTP verification.
-    if not otp:
-        return jsonify({"error": "Please enter the email OTP"}), 400
-
-    otp_record = _email_otp_store.get(email.lower())
-    if not otp_record:
-        return jsonify({"error": "OTP not found. Please click Send OTP."}), 400
-    if float(otp_record.get("expires_at") or 0) < time.time():
-        return jsonify({"error": "OTP expired. Please request a new OTP."}), 400
-    if (otp_record.get("otp_hash") or "") != _otp_hash(email, otp):
-        return jsonify({"error": "Invalid OTP"}), 400
 
     valid_username, username_msg = validate_username(username)
     if not valid_username:
@@ -1688,11 +1665,6 @@ def api_signup():
         profile["firebase_uid"] = firebase_uid
     add_user(username, password, profile=profile, email_verified=True)
 
-    # OTP was used successfully; remove it.
-    try:
-        del _email_otp_store[email.lower()]
-    except Exception:
-        pass
     return jsonify({"ok": True, "message": "Account created successfully"})
 
 
@@ -2569,7 +2541,8 @@ def api_rl_new_session():
         return err
 
     if not _rl_available or _rl_env is None:
-        return jsonify({"error": "RL module is unavailable in this runtime"}), 503
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return jsonify({"error": f"RL module is unavailable in this runtime{err_detail}"}), 503
 
     data = request.get_json(force=True) or {}
     difficulty = (data.get("difficulty") or "medium").strip().lower()
@@ -2645,7 +2618,8 @@ def api_rl_practice_text():
         return err
 
     if not _rl_available or _rl_env is None:
-        return jsonify({"error": "RL module is unavailable in this runtime"}), 503
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return jsonify({"error": f"RL module is unavailable in this runtime{err_detail}"}), 503
 
     data = request.get_json(force=True) or {}
     question = (data.get("question") or "").strip()
@@ -2883,7 +2857,8 @@ def api_rl_end_session():
 @app.get("/api/rl/agent-stats")
 def api_rl_agent_stats():
     if not _rl_available or _rl_agent is None:
-        return jsonify({"error": "RL agent is unavailable in this runtime"}), 503
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return jsonify({"error": f"RL agent is unavailable in this runtime{err_detail}"}), 503
 
     stats = _rl_agent.get_stats()
     return jsonify(
@@ -2911,10 +2886,30 @@ def openenv_health():
     return jsonify({"ok": True, "service": "interview-coach-openenv"})
 
 
+@app.get("/api/diagnostics")
+def api_diagnostics():
+    """Diagnostic endpoint to check available features and modules."""
+    return jsonify({
+        "rl_available": _rl_available,
+        "rl_error": _rl_error,
+        "firebase_available": _firebase_available,
+        "features": {
+            "basic_practice": True,
+            "audio_practice": bool(sr is not None),
+            "video_practice": True,
+            "mock_interview": True,
+            "ats_checker": True,
+            "rl_training": _rl_available,
+            "openenv_api": _rl_available,
+        }
+    })
+
+
 @app.post("/reset")
 def openenv_reset():
     if not _rl_available or _openenv_env is None:
-        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return _openenv_error(f"OpenEnv environment is unavailable in this runtime{err_detail}", 503)
 
     data = request.get_json(silent=True) or {}
     task_id = (data.get("task_id") or "").strip()
@@ -2931,7 +2926,8 @@ def openenv_reset():
 @app.get("/state")
 def openenv_state():
     if not _rl_available or _openenv_env is None:
-        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return _openenv_error(f"OpenEnv environment is unavailable in this runtime{err_detail}", 503)
 
     try:
         obs = _openenv_env.state()
@@ -2959,7 +2955,8 @@ def api_save_report():
 @app.post("/step")
 def openenv_step():
     if not _rl_available or _openenv_env is None:
-        return _openenv_error("OpenEnv environment is unavailable in this runtime", 503)
+        err_detail = f" ({_rl_error})" if _rl_error else ""
+        return _openenv_error(f"OpenEnv environment is unavailable in this runtime{err_detail}", 503)
 
     data = request.get_json(silent=True) or {}
     action_data = data.get("action") if isinstance(data.get("action"), dict) else data
