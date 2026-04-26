@@ -17,7 +17,7 @@ A full-stack Flask application combining interactive interview practice with rei
 ## Important Links
 - 🎥 **Video Demonstration:** [Watch on YouTube](https://youtu.be/xXdJKlznc2g?si=mI-OhNjt-l5tVC6q)
 - 📓 **Agent Training & Data Analysis:** [View Colab Notebook](https://colab.research.google.com/drive/1Iu-Tg60nLtEEi4SkK2SEISX_1H_RUWI7)
-- 💻 **Source Code Repository:** [Hugging Face Space Tree](https://huggingface.co/spaces/Shauriya24/AI-Powered-Interview-Coach/tree/main)
+- 💻 **Source Code Repository:** [Hugging Face Space Tree](https://huggingface.co/spaces/Shauriya24/AI-Powered-Interview-Coach)
 
 **Two components:**
 1. **Web App** — Interview practice with text/audio/video modes and instant AI feedback.
