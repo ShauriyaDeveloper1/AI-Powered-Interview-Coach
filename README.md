@@ -17,7 +17,7 @@ A full-stack Flask application combining interactive interview practice with rei
 ## Important Links
 - 🎥 **Video Demonstration:** [Watch on YouTube](https://youtu.be/xXdJKlznc2g?si=mI-OhNjt-l5tVC6q)
 - 📓 **Agent Training & Data Analysis:** [View Colab Notebook](https://colab.research.google.com/drive/1Iu-Tg60nLtEEi4SkK2SEISX_1H_RUWI7)
-- 💻 **Source Code Repository:** [Hugging Face Space Tree](https://huggingface.co/spaces/Shauriya24/AI-Powered-Interview-Coach)
+- 💻 **Source Code Repository:** [Hugging Face Space Tree](https://huggingface.co/spaces/Shauriya24/AI-Powered-Interview-Coach/tree/main)
 
 **Two components:**
 1. **Web App** — Interview practice with text/audio/video modes and instant AI feedback.
@@ -119,13 +119,12 @@ Defined in `rl_interview_coach/environment/tasks.py::TaskBank`. Nine total tasks
 ## Tech Stack
 - Backend: Flask (REST API)
 - Frontend: HTML, CSS, JavaScript, Chart.js
-- NLP: NLTK
-- Speech: SpeechRecognition, sounddevice, wavio, pydub, gTTS
+- NLP/ATS: NLTK, pdfplumber, python-docx, pyspellchecker
+- Speech: SpeechRecognition, sounddevice, wavio, pydub, pyttsx3
 - Vision/Posture: OpenCV
-- Video: MoviePy
-- Data/Charts: pandas, matplotlib
-- RL: Pydantic, PyYAML (OpenEnv spec)
-- APIs: OpenAI-compatible endpoint (AIML API), Freepik image API
+- Data/Charts: pandas, matplotlib, reportlab
+- Machine Learning / RL: PyTorch, Transformers, Scikit-Learn, Pydantic, PyYAML (OpenEnv spec)
+- APIs: OpenAI-compatible endpoint (AIML API)
 
 ## Training Results & Performance Metrics
 
@@ -231,7 +230,6 @@ Create a `.env` file in the project root or configure Space Secrets:
 
 ```env
 API_KEY=your_openai_or_aiml_api_key
-FREEPIK_API_KEY=your_freepik_api_key
 FLASK_SECRET_KEY=your_secret_key_here
 ```
 
