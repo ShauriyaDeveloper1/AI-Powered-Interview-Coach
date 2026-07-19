@@ -17,11 +17,6 @@ An adaptive AI interview platform combining Reinforcement Learning, Speech Analy
 Unlike traditional interview assistants, the platform learns which coaching strategy helps users improve faster through an OpenEnv-compatible RL environment.
 ---
 
-## 1. Hero Image / GIF
-
-![Hero Demo](static/hero.gif)
-*(User logs in ↓ Starts Interview ↓ AI Feedback ↓ RL Chooses Strategy ↓ Dashboard Updates)*
-
 ## 2. What is this?
 
 AI-Powered Interview Coach is a full-stack application that provides interactive interview practice and an OpenEnv-compliant reinforcement learning environment (`InterviewCoachEnv`). It learns which coaching strategies (strict/moderate/hint) maximize long-term improvement for a candidate, providing personalization that adapts over episodes.
