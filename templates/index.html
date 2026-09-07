@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
   <title>Interview Coach AI - Full Stack</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -15,6 +16,7 @@
   <div class="bg-shape bg-shape-b"></div>
 
   <header class="app-header">
+    <img src="/static/logo.png" alt="AI Interview Coach Logo" class="brand-logo" style="width: 72px; height: 72px; border-radius: 18px; margin: 0 auto 12px; display: block; box-shadow: 0 8px 24px rgba(0,0,0,0.3);" />
     <div class="hero-pill-row">
       <span class="hero-pill">AI Feedback</span>
       <span class="hero-pill">Interview Simulation</span>
@@ -85,26 +87,29 @@
     </section>
 
     <section id="appSection" class="hidden">
-      <nav class="tabs">
-        <button class="tab active" data-tab="about">About</button>
-        <button class="tab" data-tab="practice">Practice Interview</button>
-        <button class="tab" data-tab="progress">Progress Tracker</button>
-        <button class="tab" data-tab="ats">ATS Checker</button>
-        <button class="tab" data-tab="reports">Reports</button>
-        <button class="tab" data-tab="account">Account</button>
+      <nav class="tabs" aria-label="Main Navigation">
+        <button class="tab active" data-tab="about"><span class="tab-icon">ℹ️</span><span>About</span></button>
+        <button class="tab" data-tab="practice"><span class="tab-icon">🎙️</span><span>Practice</span></button>
+        <button class="tab" data-tab="progress"><span class="tab-icon">📈</span><span>Progress</span></button>
+        <button class="tab" data-tab="ats"><span class="tab-icon">📄</span><span>ATS Checker</span></button>
+        <button class="tab" data-tab="reports"><span class="tab-icon">📊</span><span>Reports</span></button>
+        <button class="tab" data-tab="account"><span class="tab-icon">👤</span><span>Account</span></button>
       </nav>
 
       <!-- GAMIFICATION DASHBOARD -->
-      <div id="gamificationBar" class="gamification-bar hidden">
-        <div class="gami-stats">
-          <div class="gami-stat gami-level">Level <span id="gamiLevel">1</span></div>
-          <div class="gami-stat gami-xp">XP: <span id="gamiXp">0</span></div>
-          <div class="gami-stat gami-streak"><span id="gamiStreak">0</span> 🔥 Streak</div>
+      <div id="gamificationBar" class="gamification-bar" style="display: flex; flex-direction: column; gap: 0.85rem; width: 100%; box-sizing: border-box;">
+        <div class="gami-stats" style="display: flex; justify-content: space-between; gap: 0.5rem; width: 100%;">
+          <div class="gami-stat gami-level" style="flex: 1; text-align: center; padding: 0.5rem 0.25rem;">Level <span id="gamiLevel">1</span></div>
+          <div class="gami-stat gami-xp" style="flex: 1; text-align: center; padding: 0.5rem 0.25rem;">XP: <span id="gamiXp">0</span></div>
+          <div class="gami-stat gami-streak" style="flex: 1; text-align: center; padding: 0.5rem 0.25rem;"><span id="gamiStreak">0</span> 🔥 Streak</div>
         </div>
-        <div class="gami-progress-container">
-          <div class="gami-progress-label">Interview Readiness <span id="gamiProgressText">0%</span></div>
-          <div class="gami-progress-bar">
-            <div id="gamiProgressFill" class="gami-progress-fill" style="width: 0%;"></div>
+        <div class="gami-progress-container" style="width: 100%; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div class="gami-progress-label" style="display: flex; justify-content: space-between; font-size: 0.88rem; font-weight: 600; width: 100%;">
+            <span>Interview Readiness</span>
+            <span id="gamiProgressText">0%</span>
+          </div>
+          <div class="gami-progress-bar" style="width: 100%; height: 12px; border-radius: 999px; overflow: hidden;">
+            <div id="gamiProgressFill" class="gami-progress-fill" style="width: 0%; height: 100%; border-radius: 999px;"></div>
           </div>
         </div>
       </div>
@@ -219,18 +224,18 @@
 
         <div id="textPractice" class="mode-pane hidden">
           <textarea id="textAnswer" rows="8" placeholder="Type your interview response..."></textarea>
-          <button id="analyzeTextBtn" class="cta-main">Analyze Response</button>
+          <button id="analyzeTextBtn" class="cta-main">🔍 Analyze Response</button>
         </div>
 
         <div id="audioPractice" class="mode-pane">
           <p>Use browser speech recognition, then analyze your transcript.</p>
           <div class="speech-controls">
-            <button id="startSpeechBtn">Start Speech</button>
-            <button id="stopSpeechBtn" class="ghost">Stop Speech</button>
+            <button id="startSpeechBtn">🎙️ Start Speech</button>
+            <button id="stopSpeechBtn" class="ghost">⏹️ Stop Speech</button>
           </div>
           <p id="audioSpeechTimer" class="speech-timer">Recording Time: 00:00</p>
           <textarea id="audioTranscript" rows="6" placeholder="Transcription appears here..."></textarea>
-          <button id="analyzeAudioBtn" class="cta-main">Analyze Response</button>
+          <button id="analyzeAudioBtn" class="cta-main">🔍 Analyze Response</button>
         </div>
 
         <div id="videoPractice" class="mode-pane hidden">
@@ -243,18 +248,18 @@
             </div>
           </div>
           <div class="camera-controls">
-            <button id="startCameraBtn">Start Camera</button>
-            <button id="stopCameraBtn" class="ghost">Stop Camera</button>
+            <button id="startCameraBtn">📹 Start Camera</button>
+            <button id="stopCameraBtn" class="ghost">⏹️ Stop Camera</button>
           </div>
           <p id="postureStatus">Posture: Not analyzed</p>
           <p id="postureFeedback">Feedback: No posture analysis yet</p>
           <textarea id="videoTranscript" rows="6" placeholder="Use speech recognition then submit..."></textarea>
           <div class="speech-controls">
-            <button id="startVideoSpeechBtn">Start Speech</button>
-            <button id="stopVideoSpeechBtn" class="ghost">Stop Speech</button>
+            <button id="startVideoSpeechBtn">🎙️ Start Speech</button>
+            <button id="stopVideoSpeechBtn" class="ghost">⏹️ Stop Speech</button>
           </div>
           <p id="videoSpeechTimer" class="speech-timer">Recording Time: 00:00</p>
-          <button id="submitVideoBtn" class="cta-main">Submit Video Practice</button>
+          <button id="submitVideoBtn" class="cta-main">✨ Submit Video Practice</button>
         </div>
 
         <div id="practiceThread" class="practice-thread hidden" aria-live="polite">
@@ -305,13 +310,47 @@
             <p class="section-subtitle">Unlock badges by scoring highly.</p>
           </div>
 
-          <div class="coach-panel">
-            <h3>Interview Readiness Score</h3>
-            <div class="mini-code">
-              <div>ATS = Resume quality</div>
-              <div>Readiness = Resume + Answer + Confidence</div>
+          <div class="coach-panel readiness-card">
+            <div class="readiness-card-header">
+              <div class="readiness-title-group">
+                <span id="readinessStatusBadge" class="readiness-badge beginner">🌱 Practice Started</span>
+                <h3>Interview Readiness Score</h3>
+              </div>
+              <div class="readiness-score-box">
+                <span id="readinessScoreBig">0%</span>
+                <small>Readiness</small>
+              </div>
             </div>
-            <div class="mini-code" id="readinessNumbers">Start: -<br />End: -</div>
+
+            <div class="readiness-meter">
+              <div class="readiness-meter-bar">
+                <div id="readinessProgressBarFill" class="readiness-meter-fill" style="width: 0%;"></div>
+              </div>
+              <div class="readiness-meter-labels">
+                <span>Baseline: <strong id="readinessStartText">0%</strong></span>
+                <span>Current: <strong id="readinessEndText">0%</strong></span>
+              </div>
+            </div>
+
+            <div class="readiness-factors-grid">
+              <div class="readiness-factor">
+                <span class="factor-icon">📄</span>
+                <span class="factor-name">ATS Resume</span>
+                <strong id="readinessFactorResume">0%</strong>
+              </div>
+              <div class="readiness-factor">
+                <span class="factor-icon">🎙️</span>
+                <span class="factor-name">Answer Depth</span>
+                <strong id="readinessFactorAnswer">0%</strong>
+              </div>
+              <div class="readiness-factor">
+                <span class="factor-icon">💪</span>
+                <span class="factor-name">Confidence</span>
+                <strong id="readinessFactorConfidence">0%</strong>
+              </div>
+            </div>
+
+            <div class="mini-code hidden" id="readinessNumbers">Start: -<br />End: -</div>
           </div>
 
           <div class="coach-panel">
@@ -350,7 +389,7 @@
         <div class="ats-upload">
           <label for="atsResumeFile">Upload Resume (PDF, DOCX, or TXT)</label>
           <input id="atsResumeFile" type="file" accept=".pdf,.docx,.txt" />
-          <button id="atsCheckBtn" class="cta-main" type="button">Check Resume</button>
+          <button id="atsCheckBtn" class="cta-main" type="button">📄 Check Resume</button>
           <p id="atsMessage" class="message"></p>
         </div>
 
@@ -380,7 +419,7 @@
             <input id="endDate" type="date" title="Report end date" />
           </div>
         </div>
-        <button id="downloadPdfBtn" class="cta-main">Download PDF Report</button>
+        <button id="downloadPdfBtn" class="cta-main">📥 Download PDF Report</button>
         <div id="reportsList"></div>
       </section>
 
@@ -429,8 +468,8 @@
           </div>
         </div>
 
-        <button id="saveAccountBtn" type="button" class="cta-main">Save Changes</button>
-        <button id="logoutBtn" class="hidden cta-main">Log Out</button>
+        <button id="saveAccountBtn" type="button" class="cta-main">💾 Save Changes</button>
+        <button id="logoutBtn" class="hidden cta-main">🚪 Log Out</button>
       </section>
     </section>
   </main>

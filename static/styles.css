@@ -362,13 +362,14 @@ body::after {
   display: inline-block;
   width: 1.3rem;
   height: 1.3rem;
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>');
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b6afd9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
   background-size: contain;
   background-repeat: no-repeat;
+  background-position: center;
 }
 
 input[type="text"] + .password-toggle::before {
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>');
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2326d6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24'/%3E%3Cline x1='1' y1='1' x2='23' y2='23'/%3E%3C/svg%3E");
 }
 
 input, select, textarea, button {
@@ -442,30 +443,51 @@ button.ghost {
 
 .tabs {
   display: flex;
-  flex-wrap: wrap;
   gap: .5rem;
   margin-bottom: 1rem;
   position: sticky;
   top: 0;
-  z-index: 4;
+  z-index: 30;
   padding: .5rem;
-  background: rgba(27, 22, 71, 0.82);
+  background: rgba(22, 17, 58, 0.94);
   border: 1px solid #534999;
   border-radius: 14px;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   box-shadow: 0 10px 24px rgba(3, 10, 18, 0.35);
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
   width: auto;
+  flex: 0 0 auto;
   margin: 0;
-  padding: .5rem .95rem;
+  padding: .55rem 1rem;
   background: #231c5a;
   color: #d9d4ff;
   border-radius: 10px;
   border: 1px solid #5d52a8;
   transition: transform .15s ease, border-color .2s ease, background .2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  white-space: nowrap;
+  font-size: .92rem;
+  cursor: pointer;
+}
+
+.tab-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .tab:hover {
@@ -650,6 +672,169 @@ button.ghost {
   margin: 0 0 .55rem;
   font-family: "Space Grotesk", sans-serif;
   font-size: 1.05rem;
+}
+
+/* ==========================================================================
+   Interview Readiness Scorecard
+   ========================================================================== */
+.readiness-card {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(34, 25, 84, 0.95), rgba(22, 16, 60, 0.95));
+  border: 1px solid #7359d9;
+  border-radius: 16px;
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  margin-bottom: 0.75rem;
+}
+
+.readiness-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.readiness-title-group h3 {
+  margin: 0.35rem 0 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.readiness-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.readiness-badge.ready {
+  background: rgba(56, 239, 125, 0.15);
+  color: #38ef7d;
+  border: 1px solid rgba(56, 239, 125, 0.4);
+}
+
+.readiness-badge.good {
+  background: rgba(0, 210, 255, 0.15);
+  color: #00d2ff;
+  border: 1px solid rgba(0, 210, 255, 0.4);
+}
+
+.readiness-badge.progress {
+  background: rgba(255, 170, 0, 0.15);
+  color: #ffaa00;
+  border: 1px solid rgba(255, 170, 0, 0.4);
+}
+
+.readiness-badge.beginner {
+  background: rgba(255, 79, 216, 0.15);
+  color: #ff4fd8;
+  border: 1px solid rgba(255, 79, 216, 0.4);
+}
+
+.readiness-score-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 10, 42, 0.85);
+  border: 2px solid #00d2ff;
+  border-radius: 16px;
+  padding: 0.5rem 1.1rem;
+  box-shadow: 0 0 20px rgba(0, 210, 255, 0.25);
+  min-width: 90px;
+}
+
+.readiness-score-box span {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  background: linear-gradient(135deg, #00d2ff, #38ef7d);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.readiness-score-box small {
+  font-size: 0.72rem;
+  color: #a49ad6;
+  text-transform: uppercase;
+  margin-top: 0.25rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.readiness-meter {
+  margin-bottom: 1.1rem;
+}
+
+.readiness-meter-bar {
+  height: 12px;
+  background: rgba(10, 7, 30, 0.9);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(115, 89, 217, 0.4);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+.readiness-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff4fd8, #7a5cff, #00d2ff);
+  border-radius: 999px;
+  transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 0 14px rgba(122, 92, 255, 0.6);
+}
+
+.readiness-meter-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: #b7addf;
+  margin-top: 0.4rem;
+}
+
+.readiness-meter-labels strong {
+  color: #fff;
+}
+
+.readiness-factors-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.65rem;
+}
+
+.readiness-factor {
+  background: rgba(18, 13, 50, 0.75);
+  border: 1px solid #4a3e9e;
+  border-radius: 12px;
+  padding: 0.6rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.2rem;
+}
+
+.readiness-factor .factor-icon {
+  font-size: 1.1rem;
+}
+
+.readiness-factor .factor-name {
+  font-size: 0.76rem;
+  color: #b7addf;
+  font-weight: 500;
+}
+
+.readiness-factor strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.1rem;
+  color: #38ef7d;
+  font-weight: 700;
 }
 
 .mini-code {
@@ -1253,31 +1438,38 @@ button.ghost {
 .gamification-bar {
   background: linear-gradient(135deg, #1c1549, #29206b);
   border: 1px solid #4a3e9e;
-  border-radius: 12px;
-  padding: 1rem 1.5rem;
-  margin-bottom: 1.5rem;
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.25rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.85rem;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .gami-stats {
   display: flex;
-  gap: 1.5rem;
+  justify-content: space-between;
+  gap: 0.5rem;
   align-items: center;
+  width: 100%;
 }
 
 .gami-stat {
+  flex: 1;
+  text-align: center;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: #fff;
   background: rgba(255, 255, 255, 0.05);
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
+  padding: 0.5rem 0.3rem;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
 }
 
 .gami-level {
@@ -1296,8 +1488,11 @@ button.ghost {
 }
 
 .gami-progress-container {
-  flex: 1;
+  width: 100%;
   display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
   flex-direction: column;
   gap: 0.3rem;
 }
@@ -1369,6 +1564,9 @@ button.ghost {
   100% { opacity: 0; transform: translateY(-80px) scale(0.9); }
 }
 
+/* =====================================================
+   MOBILE RESPONSIVENESS & UI RELAXATION
+   ===================================================== */
 @media (max-width: 900px) {
   .auth-grid, .grid-2, .stats {
     grid-template-columns: 1fr;
@@ -1386,15 +1584,313 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
-  .tabs {
-    position: static;
-  }
-
   .about-grid {
     grid-template-columns: 1fr;
   }
 
   .about-steps {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Container & card relaxation */
+  .container {
+    padding: 0.75rem 0.6rem;
+  }
+
+  .card {
+    padding: 1.1rem 0.95rem;
+    border-radius: 16px;
+    margin-bottom: 0.85rem;
+  }
+
+  /* Form & touch target relaxation */
+  input, select, textarea, button {
+    min-height: 44px;
+    font-size: 16px; /* Prevents auto-zoom in mobile browsers & WebView */
+  }
+
+  /* Gamification bar relaxation */
+  .gamification-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+    padding: 0.9rem;
+    margin-bottom: 1rem;
+  }
+
+  .gami-stats {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.45rem;
+    width: 100%;
+  }
+
+  .gami-stat {
+    flex: 1;
+    text-align: center;
+    padding: 0.5rem 0.35rem;
+    font-size: 0.92rem;
+    white-space: nowrap;
+  }
+
+  .gami-progress-container {
+    width: 100%;
+  }
+
+  /* Video stage & overlay */
+  .video-stage {
+    margin: 0.35rem auto 0.65rem;
+  }
+
+  .posture-overlay {
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    max-width: none;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.88rem;
+  }
+
+  /* Controls relaxation */
+  .speech-controls, .camera-controls {
+    gap: 0.5rem;
+  }
+
+  .speech-controls button, .camera-controls button {
+    min-height: 46px;
+    font-size: 0.92rem;
+    padding: 0.55rem 0.5rem;
+  }
+
+  .cta-main {
+    max-width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  /* ATS & Reports */
+  .ats-upload, .ats-results {
+    max-width: 100%;
+  }
+
+  .ats-item-help {
+    margin-left: 0;
+    padding: 0.45rem 0.6rem;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Extra mobile relaxation for smaller phone viewports */
+  .app-header {
+    padding: 1.2rem 0.5rem 0.75rem;
+  }
+
+  .app-header h1 {
+    font-size: 1.65rem;
+  }
+
+  .app-header p {
+    font-size: 0.88rem;
+    margin-top: 0.35rem;
+  }
+
+  .hero-pill-row {
+    gap: 0.35rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .hero-pill {
+    font-size: 0.72rem;
+    padding: 0.2rem 0.55rem;
+  }
+
+  .auth-panel-inner {
+    padding: 0.85rem 0.75rem;
+  }
+
+  .auth-switch {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .switch-btn {
+    text-align: center;
+    padding: 0.5rem 0.4rem;
+  }
+
+  .password-input-wrapper input {
+    padding-right: 2.8rem;
+  }
+
+  .password-toggle {
+    width: 2.2rem;
+    height: 2.2rem;
+    right: 0.4rem;
+  }
+
+  /* Relaxed Mobile UI - 3-Column Tab Grid: ALL 6 TABS ALWAYS VISIBLE */
+  .tabs {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 0.4rem !important;
+    padding: 0.45rem !important;
+    overflow-x: visible !important;
+    flex-wrap: wrap !important;
+    background: rgba(18, 14, 48, 0.96);
+    border-radius: 14px;
+  }
+
+  .tab {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    padding: 0.55rem 0.2rem !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    min-height: 44px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    gap: 0.25rem !important;
+    white-space: nowrap !important;
+    border-radius: 9px !important;
+  }
+
+  .tab-icon {
+    font-size: 0.95rem !important;
+    flex-shrink: 0;
+  }
+
+  .tab span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Relaxed Mobile Spacing & Touch Targets */
+  .container {
+    padding: 0 0.85rem !important;
+    max-width: 100% !important;
+  }
+
+  .card {
+    padding: 1.15rem 1rem !important;
+    border-radius: 14px !important;
+    margin-bottom: 1rem !important;
+  }
+
+  input, select, textarea {
+    font-size: 16px !important;
+    border-radius: 10px !important;
+  }
+
+  textarea {
+    min-height: 90px;
+    line-height: 1.45;
+  }
+
+  button, .cta-main {
+    min-height: 44px;
+    border-radius: 10px;
+  }
+
+  .stats .stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0.95rem;
+  }
+
+  .stats .stat span {
+    font-size: 1.35rem;
+    margin-bottom: 0;
+  }
+
+  .progress-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+  }
+
+  .progress-stat {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .progress-stat strong {
+    font-size: 1.05rem;
+  }
+
+  .toast-container {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+  }
+
+  .toast {
+    min-width: auto;
+    width: 100%;
+    text-align: center;
+  }
+
+  /* Mobile Alignment for Interview Readiness Card */
+  .readiness-card {
+    padding: 1rem 0.85rem !important;
+    margin-bottom: 1rem !important;
+  }
+
+  .readiness-card-header {
+    gap: 0.6rem !important;
+    align-items: center !important;
+  }
+
+  .readiness-title-group h3 {
+    font-size: 1.08rem !important;
+    line-height: 1.25 !important;
+  }
+
+  .readiness-score-box {
+    padding: 0.4rem 0.75rem !important;
+    min-width: 72px !important;
+    border-radius: 12px !important;
+  }
+
+  .readiness-score-box span {
+    font-size: 1.6rem !important;
+  }
+
+  .readiness-score-box small {
+    font-size: 0.65rem !important;
+  }
+
+  .readiness-meter {
+    margin-bottom: 0.85rem !important;
+  }
+
+  .readiness-meter-labels {
+    font-size: 0.76rem !important;
+  }
+
+  .readiness-factors-grid {
+    gap: 0.35rem !important;
+  }
+
+  .readiness-factor {
+    padding: 0.5rem 0.25rem !important;
+    border-radius: 10px !important;
+  }
+
+  .readiness-factor .factor-name {
+    font-size: 0.68rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+
+  .readiness-factor strong {
+    font-size: 0.95rem !important;
   }
 }
