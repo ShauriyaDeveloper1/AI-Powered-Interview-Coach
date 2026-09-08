@@ -84,6 +84,58 @@ function renderCoachSummaryToProgress(summary) {
   const scorecardEl = document.getElementById("scorecardNumbers");
 
   const readiness = summary?.readiness?.readiness || {};
+  const resume = summary?.readiness?.resume || {};
+  const answer = summary?.readiness?.answer || {};
+  const confidence = summary?.readiness?.confidence || {};
+
+  const currentScore = typeof readiness.end === "number" ? clamp01(readiness.end) : 0;
+  const startScore = typeof readiness.start === "number" ? clamp01(readiness.start) : 0;
+
+  const currentPercent = Math.round(currentScore * 100);
+  const startPercent = Math.round(startScore * 100);
+  const resumePercent = Math.round(clamp01(typeof resume.end === "number" ? resume.end : (typeof resume.start === "number" ? resume.start : 0)) * 100);
+  const answerPercent = Math.round(clamp01(typeof answer.end === "number" ? answer.end : (typeof answer.start === "number" ? answer.start : 0)) * 100);
+  const confPercent = Math.round(clamp01(typeof confidence.end === "number" ? confidence.end : (typeof confidence.start === "number" ? confidence.start : 0)) * 100);
+
+  const bigEl = document.getElementById("readinessScoreBig");
+  const fillEl = document.getElementById("readinessProgressBarFill");
+  const startEl = document.getElementById("readinessStartText");
+  const endEl = document.getElementById("readinessEndText");
+  const resumeEl = document.getElementById("readinessFactorResume");
+  const answerEl = document.getElementById("readinessFactorAnswer");
+  const confEl = document.getElementById("readinessFactorConfidence");
+  const badgeEl = document.getElementById("readinessStatusBadge");
+
+  if (bigEl) bigEl.textContent = `${currentPercent}%`;
+  if (fillEl) fillEl.style.width = `${Math.max(currentPercent, 4)}%`;
+  if (startEl) startEl.textContent = `${startPercent}%`;
+  if (endEl) endEl.textContent = `${currentPercent}%`;
+  if (resumeEl) resumeEl.textContent = `${resumePercent}%`;
+  if (answerEl) answerEl.textContent = `${answerPercent}%`;
+  if (confEl) confEl.textContent = `${confPercent}%`;
+
+  if (badgeEl) {
+    if (currentPercent >= 80) {
+      badgeEl.textContent = "🚀 FAANG Ready";
+      badgeEl.className = "readiness-badge ready";
+    } else if (currentPercent >= 60) {
+      badgeEl.textContent = "⭐ Interview Ready";
+      badgeEl.className = "readiness-badge good";
+    } else if (currentPercent >= 35) {
+      badgeEl.textContent = "📈 Improving Well";
+      badgeEl.className = "readiness-badge progress";
+    } else {
+      badgeEl.textContent = "🌱 Practice Started";
+      badgeEl.className = "readiness-badge beginner";
+    }
+  }
+
+  // Also sync top gamification bar if available
+  const gamiFill = document.getElementById("gamiProgressFill");
+  const gamiText = document.getElementById("gamiProgressText");
+  if (gamiFill && currentPercent > 0) gamiFill.style.width = `${currentPercent}%`;
+  if (gamiText && currentPercent > 0) gamiText.textContent = `${currentPercent}%`;
+
   if (readinessEl) {
     readinessEl.innerHTML = `Start: ${typeof readiness.start === "number" ? readiness.start.toFixed(2) : "-"}<br />End: ${typeof readiness.end === "number" ? readiness.end.toFixed(2) : "-"}`;
   }
@@ -775,7 +827,37 @@ function togglePracticeMode() {
   document.getElementById("videoPractice").classList.toggle("hidden", mode !== "Video Practice");
 }
 
+function cleanSpeechTranscript(text) {
+  if (!text) return "";
+  const words = text.trim().split(/\s+/);
+  const clean = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const norm = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const prevNorm = clean.length > 0 ? clean[clean.length - 1].toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+    if (norm && norm === prevNorm) {
+      continue; // Skip consecutive repeated words
+    }
+    clean.push(w);
+  }
+  return clean.join(" ");
+}
+
 function initSpeech(targetElementId, timerElementId) {
+  // If native Android speech bridge is available, use it directly
+  if (window.AndroidSpeech) {
+    return {
+      start: function() {
+        startSpeechTimer(timerElementId);
+        window.AndroidSpeech.startListening(targetElementId);
+      },
+      stop: function() {
+        window.AndroidSpeech.stopListening();
+        stopSpeechTimer(timerElementId);
+      }
+    };
+  }
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     alert("Speech recognition is not supported in this browser.");
@@ -787,25 +869,33 @@ function initSpeech(targetElementId, timerElementId) {
   recognizer.interimResults = true;
   recognizer.lang = "en-US";
 
-  let finalizedTranscript = "";
-
   recognizer.onstart = () => {
     startSpeechTimer(timerElementId);
   };
 
   recognizer.onresult = (event) => {
+    let finalTranscript = "";
     let interimTranscript = "";
-    for (let i = event.resultIndex; i < event.results.length; i += 1) {
-      const chunk = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalizedTranscript += `${chunk} `;
-      } else {
-        interimTranscript += chunk;
+
+    // Always reconstruct from index 0 to event.results.length - 1
+    // to prevent mobile resultIndex accumulation bugs
+    for (let i = 0; i < event.results.length; i++) {
+      const item = event.results[i];
+      if (item && item[0]) {
+        const text = item[0].transcript;
+        if (item.isFinal) {
+          finalTranscript += text + " ";
+        } else {
+          interimTranscript += text;
+        }
       }
     }
 
     const textBox = document.getElementById(targetElementId);
-    textBox.value = `${finalizedTranscript}${interimTranscript}`.trim();
+    if (textBox) {
+      const rawCombined = `${finalTranscript}${interimTranscript}`.trim();
+      textBox.value = cleanSpeechTranscript(rawCombined);
+    }
   };
 
   recognizer.onend = () => {
@@ -814,7 +904,6 @@ function initSpeech(targetElementId, timerElementId) {
 
   recognizer.onerror = () => {
     stopSpeechTimer(timerElementId);
-    showToast("Speech recognition error occurred.", "error");
   };
 
   return recognizer;
