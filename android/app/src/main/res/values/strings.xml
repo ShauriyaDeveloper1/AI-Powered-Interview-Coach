@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">AI Interview Coach</string>
+    <string name="app_subtitle">Intelligent Interview Preparation</string>
+    <!-- Live Hugging Face Space Production URL -->
+    <string name="default_web_url">https://shauriya24-ai-powered-interview-coach.hf.space</string>
+    <string name="connection_error_title">Connection Error</string>
+    <string name="connection_error_message">Unable to connect to the AI Interview Coach cloud server. Please check your internet connection.</string>
+    <string name="retry_button">Retry Connection</string>
+    <string name="change_url_button">⚙️ Change Server URL / IP</string>
+    <string name="permission_camera_mic">AI Interview Coach requires camera and microphone permissions to analyze your interview posture and speech.</string>
+</resources>

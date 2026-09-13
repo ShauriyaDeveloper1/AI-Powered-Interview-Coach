@@ -16,3 +16,11 @@ cookies.txt
 tmp_resume.txt
 *.safetensors
 *.pkl
+
+# Android
+android/.gradle/
+android/.idea/
+android/local.properties
+android/build/
+android/app/build/
+android/*/build/
