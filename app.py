@@ -140,6 +140,8 @@ ensure_nltk_resources()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "interview-coach-dev-secret")
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # Hugging Face Spaces runs the app inside an iframe. Use cross-site secure
 # cookies there so session auth survives the login redirect/fetch cycle.
@@ -3018,4 +3020,5 @@ init_rl_system()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "7860"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    debug_mode = os.getenv("FLASK_DEBUG", "false").lower() in ("true", "1", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)

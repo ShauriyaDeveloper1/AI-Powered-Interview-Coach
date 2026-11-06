@@ -1,4 +1,5 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 .env
@@ -10,9 +11,12 @@ users.json
 
 openenv_env/
 nltk_data/
+.nltk_data/
 .tmp_pip_meta/
 ai_powered_interview_coach.egg-info/
 cookies.txt
 tmp_resume.txt
 *.safetensors
 *.pkl
+.DS_Store
+Thumbs.db

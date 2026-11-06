@@ -615,33 +615,78 @@ function animateCounter(elementId, targetValue, decimals = 0, durationMs = 700) 
 }
 
 function initParallaxBackground() {
-  const a = document.querySelector(".bg-shape-a");
-  const b = document.querySelector(".bg-shape-b");
-  if (!a || !b) return;
+  const interBubble = document.querySelector(".background-gradient-animation .interactive");
+  if (!interBubble) return;
 
-  window.addEventListener("mousemove", (event) => {
-    const x = (event.clientX / window.innerWidth - 0.5) * 16;
-    const y = (event.clientY / window.innerHeight - 0.5) * 16;
-    a.style.transform = `translate(${x}px, ${y}px)`;
-    b.style.transform = `translate(${-x}px, ${-y}px)`;
-  });
+  let curX = window.innerWidth / 2;
+  let curY = window.innerHeight / 2;
+  let tgX = curX;
+  let tgY = curY;
+  let isRunning = false;
+
+  function step() {
+    const dx = tgX - curX;
+    const dy = tgY - curY;
+
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+      curX = tgX;
+      curY = tgY;
+      interBubble.style.transform = `translate3d(${Math.round(curX)}px, ${Math.round(curY)}px, 0)`;
+      isRunning = false;
+      return;
+    }
+
+    curX += dx * 0.16;
+    curY += dy * 0.16;
+    interBubble.style.transform = `translate3d(${Math.round(curX)}px, ${Math.round(curY)}px, 0)`;
+    requestAnimationFrame(step);
+  }
+
+  window.addEventListener("pointermove", (event) => {
+    tgX = event.clientX;
+    tgY = event.clientY;
+    if (!isRunning) {
+      isRunning = true;
+      requestAnimationFrame(step);
+    }
+  }, { passive: true });
 }
 
 function initCardTilt() {
   const cards = document.querySelectorAll(".about-card");
   cards.forEach((card) => {
+    let rect = null;
+    let rafId = null;
+
+    card.addEventListener("mouseenter", () => {
+      rect = card.getBoundingClientRect();
+      card.style.transition = "none";
+    }, { passive: true });
+
     card.addEventListener("mousemove", (event) => {
-      const rect = card.getBoundingClientRect();
-      const px = (event.clientX - rect.left) / rect.width;
-      const py = (event.clientY - rect.top) / rect.height;
-      const rx = (0.5 - py) * 5;
-      const ry = (px - 0.5) * 5;
-      card.style.transform = `perspective(700px) rotateX(${rx}deg) rotateY(${ry}deg) translateY(-2px)`;
-    });
+      if (!rect) rect = card.getBoundingClientRect();
+      const px = (event.clientX - rect.left) / (rect.width || 1);
+      const py = (event.clientY - rect.top) / (rect.height || 1);
+      const rx = (0.5 - py) * 6;
+      const ry = (px - 0.5) * 6;
+
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          card.style.transform = `perspective(700px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateY(-3px)`;
+          rafId = null;
+        });
+      }
+    }, { passive: true });
 
     card.addEventListener("mouseleave", () => {
-      card.style.transform = "translateY(0)";
-    });
+      rect = null;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      card.style.transition = "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease";
+      card.style.transform = "";
+    }, { passive: true });
   });
 }
 
@@ -668,20 +713,37 @@ function currentQuestion() {
   return select.value;
 }
 
+function switchTab(tabName) {
+  const tabBtn = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  const targetPanel = document.getElementById(tabName);
+  if (!tabBtn || !targetPanel) return;
+
+  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+  tabBtn.classList.add("active");
+  targetPanel.classList.add("active");
+
+  if (tabName === "ats") initAtsMeteors(18);
+  if (tabName === "progress") loadProgress();
+  if (tabName === "reports") loadReports();
+  if (tabName === "practice") {
+    document.getElementById("analysisResult").textContent = "";
+  }
+}
+
 function initTabs() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(tab.dataset.tab).classList.add("active");
-      if (tab.dataset.tab === "progress") loadProgress();
-      if (tab.dataset.tab === "reports") loadReports();
-      if (tab.dataset.tab === "practice") {
-        document.getElementById("analysisResult").textContent = "";
-      }
+      switchTab(tab.dataset.tab);
     });
   });
+
+  if (window.location.hash) {
+    const hash = window.location.hash.replace("#", "");
+    if (document.getElementById(hash)) {
+      switchTab(hash);
+    }
+  }
 }
 
 function renderAtsResults(result) {
@@ -847,11 +909,11 @@ function initSpeech(targetElementId, timerElementId) {
   // If native Android speech bridge is available, use it directly
   if (window.AndroidSpeech) {
     return {
-      start: function() {
+      start: function () {
         startSpeechTimer(timerElementId);
         window.AndroidSpeech.startListening(targetElementId);
       },
-      stop: function() {
+      stop: function () {
         window.AndroidSpeech.stopListening();
         stopSpeechTimer(timerElementId);
       }
@@ -1014,6 +1076,13 @@ async function loginFlow() {
     level: 1,
   };
   updateGamificationUi(loginGamification);
+
+  if (window.location.hash) {
+    const hash = window.location.hash.replace("#", "");
+    if (document.getElementById(hash)) {
+      switchTab(hash);
+    }
+  }
 }
 
 function resetAccountProfileForm() {
@@ -1036,25 +1105,25 @@ function resetAccountProfileForm() {
 
 function updateGamificationUi(gamification, deltaXp = 0, eventSourceElement = null) {
   if (!gamification) return;
-  
+
   const bar = document.getElementById("gamificationBar");
   if (bar) bar.classList.remove("hidden");
-  
+
   const levelEl = document.getElementById("gamiLevel");
   const xpEl = document.getElementById("gamiXp");
   const streakEl = document.getElementById("gamiStreak");
   const progressFill = document.getElementById("gamiProgressFill");
   const progressText = document.getElementById("gamiProgressText");
   const badgesContainer = document.getElementById("gamiBadgesContainer");
-  
+
   if (levelEl) levelEl.textContent = gamification.level || 1;
   if (xpEl) xpEl.textContent = gamification.total_xp || gamification.xp || 0;
   if (streakEl) streakEl.textContent = gamification.streak || 0;
-  
+
   const levelXp = (gamification.total_xp || gamification.xp || 0) % 100;
   if (progressFill) progressFill.style.width = `${levelXp}%`;
   if (progressText) progressText.textContent = `${levelXp}%`;
-  
+
   if (badgesContainer) {
     const badges = gamification.badges || [];
     if (badges.length > 0) {
@@ -1063,7 +1132,7 @@ function updateGamificationUi(gamification, deltaXp = 0, eventSourceElement = nu
       badgesContainer.innerHTML = `<span class="gami-badge empty">No badges yet</span>`;
     }
   }
-  
+
   if (deltaXp > 0 && eventSourceElement) {
     const floatEl = document.createElement("div");
     floatEl.className = "floating-xp";
@@ -1671,9 +1740,9 @@ function setupEvents() {
         }
         await api("/api/coach/settings", {
           method: "POST",
-          body: { 
+          body: {
             coach_personality: personality.value,
-            adaptive_personality: false 
+            adaptive_personality: false
           }
         });
         state.rlSessionStarted = false;
@@ -1818,11 +1887,44 @@ function setupEvents() {
   });
 }
 
+function initAtsMeteors(count = 18) {
+  const container = document.getElementById("atsMeteorsContainer");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const card = container.closest(".card") || container;
+  const cardWidth = Math.max(card.offsetWidth || 0, 900);
+
+  for (let i = 0; i < count; i++) {
+    const meteor = document.createElement("span");
+    meteor.className = "meteor";
+
+    // Spread meteors across card width and above top border
+    // Angle 215deg translation moves: dx = +573px, dy = +401px (down and right)
+    const leftPos = Math.floor(Math.random() * (cardWidth + 300) - 250);
+    const topPos = Math.floor(Math.random() * 120 - 60);
+
+    const duration = (3.2 + Math.random() * 3.8).toFixed(2); // 3.2s – 7.0s (gentle, graceful)
+    const delay = (0.1 + Math.random() * 5.0).toFixed(2);    // 0.1s – 5.1s (staggered flow)
+    const tailLength = Math.round(45 + Math.random() * 30);   // 45px – 75px (subtle tail)
+
+    meteor.style.top = `${topPos}px`;
+    meteor.style.left = `${leftPos}px`;
+    meteor.style.animation = `meteorFall ${duration}s linear ${delay}s infinite`;
+    meteor.style.setProperty("--meteor-duration", `${duration}s`);
+    meteor.style.setProperty("--meteor-delay", `${delay}s`);
+    meteor.style.setProperty("--meteor-tail", `${tailLength}px`);
+
+    container.appendChild(meteor);
+  }
+}
+
 async function bootstrap() {
   setupEvents();
   setupPasswordVisibility();
   initParallaxBackground();
   initCardTilt();
+  initAtsMeteors(18);
   resetRlSummary();
   updatePostureUi(state.posture.status, state.posture.feedback);
   switchAuthMode("login");

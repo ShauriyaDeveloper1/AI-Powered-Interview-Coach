@@ -122,8 +122,8 @@ python -m pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```env
+API_KEY=your_openai_or_aiml_api_key
 FLASK_SECRET_KEY=your_secret_key_here
-HF_TOKEN=your_token_here (for deployment on Hugging Face)
 ```
 
 ### 3) Run the App
